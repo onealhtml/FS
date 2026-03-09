@@ -16,7 +16,7 @@ def calcLeds(numero, nLeds):            # Função para calcular a quantidade de
     for j in range(len(numero)):                        # Percorre caractere por caractere do número
         if not numero[j].isdigit():                     # Verifica se o caractere é um dígito válido
             print(f"Caractere invalido: {numero[j]}")   # Avisa caso encontre caractere inválido
-            continue
+            continue                                    # Continua para o próximo caractere, ignorando o inválido
 
         totalLeds += nLeds[int(numero[j])]  # Soma os leds do dígito atual ao total
 
