@@ -4,9 +4,6 @@
     FS - UNISC
 """
 
-# Não é recomendado usar recursão para calcular Fibonacci, pois pode levar a um grande número de chamadas e ser ineficiente.
-# Em vez disso, uso uma abordagem iterativa para gerar os termos de Fibonacci.
-
 def fibonacci(n):                   # Função que imprime os termos de Fibonacci menores que n
     a, b = 0, 1                     # Inicializa os dois primeiros termos: a=0, b=1
     termos = []                     # Lista para armazenar os termos de Fibonacci como strings para impressão
