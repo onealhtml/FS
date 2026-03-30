@@ -100,7 +100,17 @@ class Banco:
                 return conta
         return None
 
+    def _verificacao_conta_por_cpf(self, cpf):
+        for conta in self._contas.iterar_valores():
+            if conta.get_cpf() == cpf:
+                return conta
+        return None
+
+
     def incluir_conta(self, titular, cpf):
+        if self._verificacao_conta_por_cpf(cpf) is not None:
+            return False, "Já existe uma conta com este CPF."
+
         numero_gerado = self._gerar_numero_conta()
         try:
             # Regra da atividade: toda conta sempre inicia com saldo zero.
