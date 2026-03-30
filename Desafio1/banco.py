@@ -84,8 +84,6 @@ class Conta:
 class Banco:
     def __init__(self):
         self._contas = ListaEncadeada()
-        self._proximo_numero = 1001
-
 
     def _gerar_numero_conta(self):
         max_numero = 1000

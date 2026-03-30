@@ -14,6 +14,10 @@ Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`)
 - Depósito
 - Saque
 
+## Diagrama de Classes
+
+![Diagrama de Classes - Sistema Bancário](Banco%20Account%20Management-2026-03-30-023524.svg)
+
 ## Arquivos principais
 
 - `listaencadeada.py`: implementação da lista encadeada
