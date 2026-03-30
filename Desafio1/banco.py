@@ -86,10 +86,13 @@ class Banco:
         self._contas = ListaEncadeada()
         self._proximo_numero = 1001
 
+
     def _gerar_numero_conta(self):
-        numero = self._proximo_numero
-        self._proximo_numero += 1
-        return numero
+        max_numero = 1000
+        for conta in self._contas.iterar_valores():
+            if conta.get_numero() > max_numero:
+                max_numero = conta.get_numero()
+        return max_numero + 1
 
     def _buscar_conta(self, numero):
         for conta in self._contas.iterar_valores():
@@ -117,6 +120,7 @@ class Banco:
             return False, "Nao e possivel excluir conta com saldo diferente de zero."
 
         self._contas.excluir(conta)
+
         return True, "Conta excluida com sucesso."
 
     def consultar_conta(self, numero):
