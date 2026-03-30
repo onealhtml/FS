@@ -19,7 +19,7 @@ class Conta:
 
     def set_numero(self, valor):
         if int(valor) <= 0:
-            raise ValueError("Numero da conta deve ser maior que zero.")
+            raise ValueError("Número da conta deve ser maior que zero.")
         self._numero = int(valor)
 
     def get_titular(self):
@@ -28,7 +28,7 @@ class Conta:
     def set_titular(self, valor):
         nome = str(valor).strip()
         if not nome:
-            raise ValueError("Titular da conta nao pode ser vazio.")
+            raise ValueError("Titular da conta não pode ser vazio.")
         self._titular = nome
 
     def get_cpf(self):
@@ -37,11 +37,11 @@ class Conta:
     def set_cpf(self, valor):
         cpf = str(valor).strip()
         if not cpf:
-            raise ValueError("CPF nao pode ser vazio.")
+            raise ValueError("CPF não pode ser vazio.")
         if not cpf.isdigit():
-            raise ValueError("CPF deve conter apenas digitos.")
+            raise ValueError("CPF deve conter apenas dígitos.")
         if len(cpf) != 11:
-            raise ValueError("CPF deve ter exatamente 11 digitos.")
+            raise ValueError("CPF deve ter exatamente 11 dígitos.")
         if self._verificacao_conta_por_cpf(cpf) is not None:
             raise ValueError("Já existe uma conta com este CPF.")
         self._cpf = cpf
@@ -52,7 +52,7 @@ class Conta:
     def set_saldo(self, valor):
         saldo = float(valor)
         if saldo < 0:
-            raise ValueError("Saldo nao pode ser negativo.")
+            raise ValueError("Saldo não pode ser negativo.")
         self._saldo = saldo
 
     def get_prox(self):
@@ -64,9 +64,9 @@ class Conta:
     def depositar(self, valor):
         valor_float = float(valor)
         if valor_float <= 0:
-            return False, "Valor do deposito deve ser maior que zero."
+            return False, "Valor do depósito deve ser maior que zero."
         self._saldo += valor_float
-        return True, "Deposito realizado com sucesso."
+        return True, "Depósito realizado com sucesso."
 
     def sacar(self, valor):
         valor_float = float(valor)
@@ -118,37 +118,37 @@ class Banco:
             return False, str(erro)
 
         self._contas.inserir_fim(nova_conta)
-        return True, f"Conta incluida com sucesso. Numero: {numero_gerado}."
+        return True, f"Conta incluída com sucesso. Número: {numero_gerado}."
 
     def excluir_conta(self, numero):
         conta = self._buscar_conta(numero)
         if conta is None:
-            return False, "Conta nao encontrada."
+            return False, "Conta não encontrada."
 
         if conta.get_saldo() != 0:
-            return False, "Nao e possivel excluir conta com saldo diferente de zero."
+            return False, "Não é possível excluir conta com saldo diferente de zero."
 
         self._contas.excluir(conta)
 
-        return True, "Conta excluida com sucesso."
+        return True, "Conta excluída com sucesso."
 
     def consultar_conta(self, numero):
         conta = self._buscar_conta(numero)
         if conta is None:
-            return False, "Conta nao encontrada.", None
+            return False, "Conta não encontrada.", None
         return True, "Conta encontrada.", conta
 
     def depositar(self, numero, valor):
         conta = self._buscar_conta(numero)
         if conta is None:
-            return False, "Conta nao encontrada."
+            return False, "Conta não encontrada."
 
         return conta.depositar(valor)
 
     def sacar(self, numero, valor):
         conta = self._buscar_conta(numero)
         if conta is None:
-            return False, "Conta nao encontrada."
+            return False, "Conta não encontrada."
 
         return conta.sacar(valor)
 
@@ -163,8 +163,8 @@ class Banco:
             linhas.append(str(conta))
 
         if total_contas == 0:
-            return "Relatorio: nenhuma conta cadastrada."
+            return "Relatório: nenhuma conta cadastrada."
 
-        cabecalho = "Relatorio de Contas"
+        cabecalho = "Relatório de Contas"
         resumo = f"Total de contas: {total_contas} | Saldo total no banco: R$ {saldo_total:.2f}"
         return "\n".join([cabecalho, "-" * len(cabecalho), *linhas, "", resumo])
