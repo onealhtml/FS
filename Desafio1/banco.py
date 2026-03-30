@@ -42,6 +42,8 @@ class Conta:
             raise ValueError("CPF deve conter apenas digitos.")
         if len(cpf) != 11:
             raise ValueError("CPF deve ter exatamente 11 digitos.")
+        if self._verificacao_conta_por_cpf(cpf) is not None:
+            raise ValueError("Já existe uma conta com este CPF.")
         self._cpf = cpf
 
     def get_saldo(self):
@@ -108,9 +110,6 @@ class Banco:
 
 
     def incluir_conta(self, titular, cpf):
-        if self._verificacao_conta_por_cpf(cpf) is not None:
-            return False, "Já existe uma conta com este CPF."
-
         numero_gerado = self._gerar_numero_conta()
         try:
             # Regra da atividade: toda conta sempre inicia com saldo zero.
