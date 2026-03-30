@@ -44,7 +44,7 @@ class ListaEncadeada:
 
         if self._primeiro is valor:
             self._primeiro = self._primeiro.get_prox()
-            print("Valor excluido com sucesso")
+           # print("Valor excluido com sucesso")
             return True
 
         anterior = self._primeiro
