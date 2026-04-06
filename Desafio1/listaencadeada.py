@@ -55,7 +55,7 @@ class ListaEncadeada:
             atual = atual.get_prox()
 
         if atual is None:
-            print("Valor nao encontrado")
+            print("Valor não encontrado")
             return False
 
         anterior.set_prox(atual.get_prox())

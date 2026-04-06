@@ -1,6 +1,5 @@
 from banco import Banco
 
-
 def main():
     banco = Banco()
 

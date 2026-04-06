@@ -12,15 +12,18 @@ class ListaEncadeada:
 
     def listaVazia(self):
         return self.primeiro is None
+    
     def mostrarLista(self):
         if self.listaVazia():
-            print("Lista Vazia")
+            print("Lista vazia\n")
             return
 
         atual = self.primeiro
         while atual is not None:
             atual.mostrarNo()
             atual = atual.prox
+
+        print("")
 
     def inserirInicio(self, valor):
         novo = No(valor)
@@ -45,11 +48,12 @@ class ListaEncadeada:
 
     def excluir(self, valor):
         if self.listaVazia():
+            print("Lista vazia\n")
             return
 
         if self.primeiro.valor == valor:
             self.primeiro = self.primeiro.prox
-            print("Valor excluído com sucesso")
+            print("Valor excluído com sucesso\n")
             return
 
         anterior = self.primeiro
@@ -60,14 +64,15 @@ class ListaEncadeada:
             atual = atual.prox
 
         if atual is None:
-            print("Valor não encontrado")
+            print("Valor não encontrado\n")
+            return
 
         anterior.prox = atual.prox
-        print("Valor excluído com sucesso")
+        print("Valor excluído com sucesso\n")
 
     def pesquisar(self, valor):
         if self.listaVazia():
-            print("Lista vazia")
+            print("Lista vazia\n")
             return False
 
         atual = self.primeiro
@@ -76,11 +81,29 @@ class ListaEncadeada:
             atual = atual.prox
 
         if atual is None:
-            print("Valor não encontrado")
+            print("Valor não encontrado\n")
             return False
 
-        print("Valor encontrado")
+        print("Valor encontrado\n")
         return True
 
     def ordenar(self):
+        if self.listaVazia():
+            print("Lista vazia\n")
+            return
+        
+        houve_troca = True
+        
+        while houve_troca:
+            houve_troca = False
+            atual = self.primeiro
+            while atual.prox is not None:
+                if atual.valor > atual.prox.valor:
+                    temp = atual.valor
+                    atual.valor = atual.prox.valor
+                    atual.prox.valor = temp
+                    houve_troca = True
+
+                atual = atual.prox
+        print("Lista ordenada!\n")
         return

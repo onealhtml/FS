@@ -35,6 +35,7 @@ def mostrar_menu():
     print("4 - Relatório")
     print("5 - Depósito")
     print("6 - Saque")
+    print("7 - Importar contas via CSV")
     print("0 - Sair\n")
 
 
@@ -81,6 +82,12 @@ def executar_cli():
             ok, msg = banco.sacar(numero, valor)
             print(msg)
 
+        elif opcao == "7":
+            caminho = input("Caminho do CSV: ").strip()
+            delimitador = input("Delimitador (Enter para ','): ").strip() or ","
+            ok, msg = banco.importar_contas_csv(caminho, delimitador)
+            print(msg)
+
         elif opcao == "0":
             print("Encerrando sistema...")
             executando = False
@@ -90,7 +97,5 @@ def executar_cli():
 
         if executando:
             input("\nPressione Enter para voltar ao menu...")
-
-
 
 executar_cli()

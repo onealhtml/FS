@@ -1,6 +1,6 @@
-# Banco CLI com Lista Encadeada
+# Banco CLI com Hash + Lista Encadeada
 
-Projeto simples em Python para atividade de estrutura de dados, usando lista encadeada para armazenar contas bancárias.
+Projeto simples em Python para atividade de estrutura de dados, usando tabela hash com tratamento de colisão por encadeamento separado (`ListaEncadeada`).
 Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`).
 
 ## Funcionalidades
@@ -13,6 +13,8 @@ Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`)
 - Relatório de contas
 - Depósito
 - Saque
+- Busca de conta por hash FNV-1a
+- Importação de contas por CSV (`numero,titular,cpf,saldo,ativa`)
 
 ## Diagrama de Classes
 
@@ -21,21 +23,36 @@ Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`)
 ## Arquivos principais
 
 - `listaencadeada.py`: implementação da lista encadeada
-- `banco.py`: regras de negócio do banco
+- `banco.py`: regras de negócio do banco, hash FNV-1a e importação CSV
 - `banco_cli.py`: menu interativo no terminal
-- `main.py`: ponto de entrada do CLI
 - `smoke_cli.py`: teste rápido sem interação
 
 ## Executar
 
 ```bash
-python Listas/ListaEncadeada/main.py
+python Desafio1/banco_cli.py
 ```
 
 ## Teste rápido
 
 ```bash
-python Listas/ListaEncadeada/smoke_cli.py
+python Desafio1/smoke_cli.py
 ```
+
+## Formato do CSV
+
+Cada linha deve ter 5 campos:
+
+```text
+numero,titular,cpf,saldo,ativa
+```
+
+Exemplo:
+
+```text
+386573,Bruno Silva,104.332.181-96,27842.88,False
+```
+
+Valores aceitos em `ativa`: `True/False`, `1/0`, `sim/nao`, `ativo/inativo`.
 
 
