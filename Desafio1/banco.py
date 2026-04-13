@@ -90,11 +90,15 @@ class Conta:
         )
 
 class Banco:
-    def __init__(self, table_size: int = 101):
+    def __init__(self, table_size: int = 101, max_load_factor: float = 0.75):
         if int(table_size) <= 0:
             raise ValueError("table_size deve ser maior que zero.")
+        if float(max_load_factor) <= 0:
+            raise ValueError("max_load_factor deve ser maior que zero.")
         self._table_size = int(table_size)
+        self._max_load_factor = float(max_load_factor)
         self._buckets = [ListaEncadeada() for _ in range(self._table_size)]
+        self._qtd_contas = 0
         self._ultimo_numero = 1000
 
     def _gerar_numero_conta(self):
@@ -122,11 +126,33 @@ class Banco:
             for conta in bucket.iterar_valores():
                 yield conta
 
-    def _inserir_conta_obj(self, conta: Conta):
+    def _fator_carga(self) -> float:
+        return self._qtd_contas / self._table_size
+
+    def _precisa_redimensionar(self) -> bool:
+        return self._fator_carga() > self._max_load_factor
+
+    def _proximo_tamanho_tabela(self) -> int:
+        return (self._table_size * 2) + 1
+
+    def _redimensionar_tabela(self, novo_tamanho: int):
+        contas = list(self._iterar_contas())
+        self._table_size = int(novo_tamanho)
+        self._buckets = [ListaEncadeada() for _ in range(self._table_size)]
+        self._qtd_contas = 0
+
+        for conta in contas:
+            self._inserir_conta_obj(conta, verificar_redimensionamento=False)
+
+    def _inserir_conta_obj(self, conta: Conta, verificar_redimensionamento: bool = True):
         indice = self._indice_bucket(conta.get_numero())
         self._buckets[indice].inserir_fim(conta)
+        self._qtd_contas += 1
         if conta.get_numero() > self._ultimo_numero:
             self._ultimo_numero = conta.get_numero()
+
+        if verificar_redimensionamento and self._precisa_redimensionar():
+            self._redimensionar_tabela(self._proximo_tamanho_tabela())
 
     def _buscar_conta(self, numero):
         numero_int = int(numero)
@@ -167,7 +193,9 @@ class Banco:
             return False, "Não é possível excluir conta com saldo diferente de zero."
 
         indice = self._indice_bucket(conta.get_numero())
-        self._buckets[indice].excluir(conta)
+        removida = self._buckets[indice].excluir(conta)
+        if removida:
+            self._qtd_contas -= 1
 
         return True, "Conta excluída com sucesso."
 
@@ -230,6 +258,29 @@ class Banco:
             return "Nenhuma conta cadastrada na tabela hash."
 
         return "\n".join(linhas)
+
+    def estatisticas_hash(self):
+        bucket_usado = 0
+        maior_cadeia = 0
+
+        for bucket in self._buckets:
+            tamanho = sum(1 for _ in bucket.iterar_valores())
+            if tamanho > 0:
+                bucket_usado += 1
+                if tamanho > maior_cadeia:
+                    maior_cadeia = tamanho
+
+        media_por_bucket_usado = (self._qtd_contas / bucket_usado) if bucket_usado else 0.0
+        return {
+            "table_size": self._table_size,
+            "total_contas": self._qtd_contas,
+            "buckets_usados": bucket_usado,
+            "buckets_vazios": self._table_size - bucket_usado,
+            "fator_carga": self._fator_carga(),
+            "media_cadeia_bucket_usado": media_por_bucket_usado,
+            "maior_cadeia": maior_cadeia,
+            "max_load_factor": self._max_load_factor,
+        }
 
     @staticmethod
     def _parse_bool_ativa(valor):

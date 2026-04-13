@@ -26,6 +26,7 @@ Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`)
 - `banco.py`: regras de negócio do banco, hash FNV-1a e importação CSV
 - `banco_cli.py`: menu interativo no terminal
 - `smoke_cli.py`: teste rápido sem interação
+- `smoke_csv_hash.py`: smoke de importação CSV + debug de buckets
 
 ## Executar
 
@@ -37,6 +38,14 @@ python Desafio1/banco_cli.py
 
 ```bash
 python Desafio1/smoke_cli.py
+```
+
+## Smoke CSV + buckets
+
+```bash
+python Desafio1/smoke_csv_hash.py
+python Desafio1/smoke_csv_hash.py --csv Desafio1/clientes_banco.csv --table-size 20011
+python Desafio1/smoke_csv_hash.py --mostrar-vazios --max-erros 10
 ```
 
 ## Formato do CSV
