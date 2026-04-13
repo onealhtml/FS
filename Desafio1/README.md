@@ -13,7 +13,10 @@ Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`)
 - Relatório de contas
 - Depósito
 - Saque
-- Busca de conta por hash FNV-1a
+- Busca por hash com estratégia configurável (`divisao` ou `fnv1a`)
+- Métricas da distribuição da tabela hash (colisões, fator de carga, maior cadeia, etc.)
+- Métrica comparativa completa entre `divisao` x `fnv1a` (distribuição + tempo)
+- Visualização da lista encadeada de cada bucket
 - Importação de contas por CSV (`numero,titular,cpf,saldo,ativa`)
 
 ## Diagrama de Classes
@@ -23,7 +26,7 @@ Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`)
 ## Arquivos principais
 
 - `listaencadeada.py`: implementação da lista encadeada
-- `banco.py`: regras de negócio do banco, hash FNV-1a e importação CSV
+- `banco.py`: regras de negócio, hash configurável, métricas e importação CSV
 - `banco_cli.py`: menu interativo no terminal
 - `smoke_cli.py`: teste rápido sem interação
 - `smoke_csv_hash.py`: smoke de importação CSV + debug de buckets
@@ -33,6 +36,17 @@ Neste modelo, a classe `Conta` também funciona como nó da lista (campo `prox`)
 ```bash
 python Desafio1/banco_cli.py
 ```
+
+No início da execução você pode configurar:
+
+- tamanho da tabela hash
+- estratégia de hash (`divisao` ou `fnv1a`)
+
+No menu há opções para:
+
+- listar buckets com encadeamento
+- exibir métricas da distribuição
+- comparar as duas hashes com benchmark de busca
 
 ## Teste rápido
 

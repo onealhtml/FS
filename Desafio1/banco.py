@@ -1,4 +1,6 @@
 import csv
+import math
+import time
 from typing import Optional
 
 from listaencadeada import ListaEncadeada
@@ -90,12 +92,16 @@ class Conta:
         )
 
 class Banco:
-    def __init__(self, table_size: int = 101, max_load_factor: float = 0.75):
+    def __init__(self, table_size: int = 101, hash_strategy: str = "divisao", max_load_factor: float = 0.75):
         if int(table_size) <= 0:
             raise ValueError("table_size deve ser maior que zero.")
         if float(max_load_factor) <= 0:
             raise ValueError("max_load_factor deve ser maior que zero.")
         self._table_size = int(table_size)
+        estrategia = str(hash_strategy).strip().lower()
+        if estrategia not in {"divisao", "fnv1a"}:
+            raise ValueError("hash_strategy deve ser 'divisao' ou 'fnv1a'.")
+        self._hash_strategy = estrategia
         self._max_load_factor = float(max_load_factor)
         self._buckets = [ListaEncadeada() for _ in range(self._table_size)]
         self._qtd_contas = 0
@@ -119,6 +125,8 @@ class Banco:
         return hash_value % table_size
 
     def _indice_bucket(self, numero: int) -> int:
+        if self._hash_strategy == "divisao":
+            return int(numero) % self._table_size
         return self.fnv1a(str(numero), self._table_size)
 
     def _iterar_contas(self):
@@ -140,7 +148,6 @@ class Banco:
         self._table_size = int(novo_tamanho)
         self._buckets = [ListaEncadeada() for _ in range(self._table_size)]
         self._qtd_contas = 0
-
         for conta in contas:
             self._inserir_conta_obj(conta, verificar_redimensionamento=False)
 
@@ -150,7 +157,6 @@ class Banco:
         self._qtd_contas += 1
         if conta.get_numero() > self._ultimo_numero:
             self._ultimo_numero = conta.get_numero()
-
         if verificar_redimensionamento and self._precisa_redimensionar():
             self._redimensionar_tabela(self._proximo_tamanho_tabela())
 
@@ -241,6 +247,9 @@ class Banco:
         return "\n".join([cabecalho, "-" * len(cabecalho), *linhas, "", resumo])
 
     def debug_buckets(self, mostrar_vazios: bool = False):
+        return self.listar_buckets(mostrar_vazios=mostrar_vazios)
+
+    def listar_buckets(self, mostrar_vazios: bool = False):
         linhas = []
 
         for indice, bucket in enumerate(self._buckets):
@@ -250,7 +259,9 @@ class Banco:
                 continue
 
             if numeros:
-                linhas.append(f"Bucket {indice:03d}: " + " -> ".join(numeros) + " -> None")
+                linhas.append(
+                    f"Bucket {indice:03d} ({len(numeros)}): " + " -> ".join(numeros) + " -> None"
+                )
             else:
                 linhas.append(f"Bucket {indice:03d}: vazio")
 
@@ -259,28 +270,154 @@ class Banco:
 
         return "\n".join(linhas)
 
-    def estatisticas_hash(self):
-        bucket_usado = 0
-        maior_cadeia = 0
+    def obter_metricas_hash(self):
+        tamanhos_buckets = [sum(1 for _ in bucket.iterar_valores()) for bucket in self._buckets]
 
-        for bucket in self._buckets:
-            tamanho = sum(1 for _ in bucket.iterar_valores())
-            if tamanho > 0:
-                bucket_usado += 1
-                if tamanho > maior_cadeia:
-                    maior_cadeia = tamanho
+        total_contas = self._qtd_contas
+        buckets_ocupados = sum(1 for tamanho in tamanhos_buckets if tamanho > 0)
+        buckets_vazios = self._table_size - buckets_ocupados
+        colisoes = sum(max(0, tamanho - 1) for tamanho in tamanhos_buckets)
+        maior_cadeia = max(tamanhos_buckets, default=0)
+        fator_carga = self._fator_carga()
+        media_por_bucket = total_contas / self._table_size
+        media_bucket_ocupado = (total_contas / buckets_ocupados) if buckets_ocupados else 0.0
+        variancia = sum((tamanho - media_por_bucket) ** 2 for tamanho in tamanhos_buckets) / self._table_size
+        desvio_padrao = math.sqrt(variancia)
 
-        media_por_bucket_usado = (self._qtd_contas / bucket_usado) if bucket_usado else 0.0
         return {
+            "estrategia": self._hash_strategy,
             "table_size": self._table_size,
-            "total_contas": self._qtd_contas,
-            "buckets_usados": bucket_usado,
-            "buckets_vazios": self._table_size - bucket_usado,
-            "fator_carga": self._fator_carga(),
-            "media_cadeia_bucket_usado": media_por_bucket_usado,
+            "total_contas": total_contas,
+            "buckets_ocupados": buckets_ocupados,
+            "buckets_vazios": buckets_vazios,
+            "fator_carga": fator_carga,
+            "colisoes": colisoes,
             "maior_cadeia": maior_cadeia,
+            "media_bucket_ocupado": media_bucket_ocupado,
+            "desvio_padrao_tamanho_bucket": desvio_padrao,
             "max_load_factor": self._max_load_factor,
         }
+
+    def estatisticas_hash(self):
+        m = self.obter_metricas_hash()
+        return {
+            "table_size": m["table_size"],
+            "total_contas": m["total_contas"],
+            "buckets_usados": m["buckets_ocupados"],
+            "buckets_vazios": m["buckets_vazios"],
+            "fator_carga": m["fator_carga"],
+            "media_cadeia_bucket_usado": m["media_bucket_ocupado"],
+            "maior_cadeia": m["maior_cadeia"],
+            "max_load_factor": m["max_load_factor"],
+        }
+
+    def relatorio_metricas_hash(self):
+        m = self.obter_metricas_hash()
+        return "\n".join(
+            [
+                "Métricas da Tabela Hash",
+                "-" * 23,
+                f"Estratégia de hash: {m['estrategia']}",
+                f"Tamanho da tabela: {m['table_size']}",
+                f"Total de contas: {m['total_contas']}",
+                f"Buckets ocupados: {m['buckets_ocupados']} | Buckets vazios: {m['buckets_vazios']}",
+                f"Fator de carga: {m['fator_carga']:.4f}",
+                f"Colisões (inserções em bucket já ocupado): {m['colisoes']}",
+                f"Maior cadeia: {m['maior_cadeia']}",
+                f"Média por bucket ocupado: {m['media_bucket_ocupado']:.4f}",
+                f"Desvio padrão do tamanho dos buckets: {m['desvio_padrao_tamanho_bucket']:.4f}",
+            ]
+        )
+
+    def comparar_estrategias_hash(self, repeticoes_busca: int = 5):
+        repeticoes = max(1, int(repeticoes_busca))
+        snapshot = [
+            (
+                conta.get_numero(),
+                conta.get_titular(),
+                conta.get_cpf(),
+                conta.get_saldo(),
+                conta.get_ativa(),
+            )
+            for conta in self._iterar_contas()
+        ]
+        numeros_existentes = [dados[0] for dados in snapshot]
+        numeros_inexistentes = [numero + 10_000_000 for numero in numeros_existentes] or [9_999_999]
+
+        comparativo = {}
+        for estrategia in ("divisao", "fnv1a"):
+            banco_teste = Banco(table_size=self._table_size, hash_strategy=estrategia, max_load_factor=self._max_load_factor)
+
+            inicio = time.perf_counter_ns()
+            for numero, titular, cpf, saldo, ativa in snapshot:
+                conta = Conta(numero=numero, titular=titular, cpf=cpf, saldo=saldo, ativa=ativa)
+                banco_teste._inserir_conta_obj(conta)
+            tempo_insercao_ms = (time.perf_counter_ns() - inicio) / 1_000_000
+
+            inicio = time.perf_counter_ns()
+            for _ in range(repeticoes):
+                for numero in numeros_existentes:
+                    banco_teste._buscar_conta(numero)
+            tempo_busca_existente_ms = (time.perf_counter_ns() - inicio) / 1_000_000
+
+            inicio = time.perf_counter_ns()
+            for _ in range(repeticoes):
+                for numero in numeros_inexistentes:
+                    banco_teste._buscar_conta(numero)
+            tempo_busca_inexistente_ms = (time.perf_counter_ns() - inicio) / 1_000_000
+
+            total_buscas_existentes = max(1, repeticoes * len(numeros_existentes))
+            total_buscas_inexistentes = max(1, repeticoes * len(numeros_inexistentes))
+
+            metricas = banco_teste.obter_metricas_hash()
+            metricas.update(
+                {
+                    "tempo_insercao_ms": tempo_insercao_ms,
+                    "tempo_total_busca_existente_ms": tempo_busca_existente_ms,
+                    "tempo_total_busca_inexistente_ms": tempo_busca_inexistente_ms,
+                    "media_busca_existente_us": (tempo_busca_existente_ms * 1000) / total_buscas_existentes,
+                    "media_busca_inexistente_us": (tempo_busca_inexistente_ms * 1000) / total_buscas_inexistentes,
+                    "throughput_busca_existente_ops_s": total_buscas_existentes / max(0.000001, tempo_busca_existente_ms / 1000),
+                    "throughput_busca_inexistente_ops_s": total_buscas_inexistentes
+                    / max(0.000001, tempo_busca_inexistente_ms / 1000),
+                }
+            )
+            comparativo[estrategia] = metricas
+
+        return {
+            "table_size": self._table_size,
+            "total_contas": len(snapshot),
+            "repeticoes_busca": repeticoes,
+            "resultados": comparativo,
+        }
+
+    def relatorio_comparativo_hash(self, repeticoes_busca: int = 5):
+        dados = self.comparar_estrategias_hash(repeticoes_busca=repeticoes_busca)
+        divisao = dados["resultados"]["divisao"]
+        fnv1a = dados["resultados"]["fnv1a"]
+
+        linhas = [
+            "Comparativo de Hash (divisao x fnv1a)",
+            "-" * 36,
+            f"Total de contas avaliadas: {dados['total_contas']} | Tamanho tabela: {dados['table_size']} | Repetições de busca: {dados['repeticoes_busca']}",
+            "",
+            "Distribuição",
+            f"- Fator de carga: divisao={divisao['fator_carga']:.4f} | fnv1a={fnv1a['fator_carga']:.4f}",
+            f"- Buckets ocupados: divisao={divisao['buckets_ocupados']} | fnv1a={fnv1a['buckets_ocupados']}",
+            f"- Buckets vazios: divisao={divisao['buckets_vazios']} | fnv1a={fnv1a['buckets_vazios']}",
+            f"- Colisões: divisao={divisao['colisoes']} | fnv1a={fnv1a['colisoes']}",
+            f"- Maior cadeia: divisao={divisao['maior_cadeia']} | fnv1a={fnv1a['maior_cadeia']}",
+            f"- Média bucket ocupado: divisao={divisao['media_bucket_ocupado']:.4f} | fnv1a={fnv1a['media_bucket_ocupado']:.4f}",
+            f"- Desvio padrão tamanhos: divisao={divisao['desvio_padrao_tamanho_bucket']:.4f} | fnv1a={fnv1a['desvio_padrao_tamanho_bucket']:.4f}",
+            "",
+            "Tempo",
+            f"- Inserção total (ms): divisao={divisao['tempo_insercao_ms']:.4f} | fnv1a={fnv1a['tempo_insercao_ms']:.4f}",
+            f"- Busca existente média (us): divisao={divisao['media_busca_existente_us']:.4f} | fnv1a={fnv1a['media_busca_existente_us']:.4f}",
+            f"- Busca inexistente média (us): divisao={divisao['media_busca_inexistente_us']:.4f} | fnv1a={fnv1a['media_busca_inexistente_us']:.4f}",
+            f"- Throughput busca existente (ops/s): divisao={divisao['throughput_busca_existente_ops_s']:.2f} | fnv1a={fnv1a['throughput_busca_existente_ops_s']:.2f}",
+            f"- Throughput busca inexistente (ops/s): divisao={divisao['throughput_busca_inexistente_ops_s']:.2f} | fnv1a={fnv1a['throughput_busca_inexistente_ops_s']:.2f}",
+        ]
+        return "\n".join(linhas)
 
     @staticmethod
     def _parse_bool_ativa(valor):

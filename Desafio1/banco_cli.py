@@ -36,6 +36,9 @@ def mostrar_menu():
     print("5 - Depósito")
     print("6 - Saque")
     print("7 - Importar contas via CSV")
+    print("8 - Mostrar lista por bucket")
+    print("9 - Mostrar métricas da hash")
+    print("10 - Comparar divisão x fnv1a")
     print("0 - Sair\n")
 
 
@@ -87,6 +90,22 @@ def executar_cli():
             delimitador = input("Delimitador (Enter para ','): ").strip() or ","
             ok, msg = banco.importar_contas_csv(caminho, delimitador)
             print(msg)
+
+        elif opcao == "8":
+            mostrar_vazios = input("Mostrar buckets vazios? [s/N]: ").strip().lower() == "s"
+            print(banco.listar_buckets(mostrar_vazios=mostrar_vazios))
+
+        elif opcao == "9":
+            print(banco.relatorio_metricas_hash())
+
+        elif opcao == "10":
+            repeticoes_txt = input("Repetições para benchmark de busca (Enter para 5): ").strip()
+            try:
+                repeticoes = int(repeticoes_txt) if repeticoes_txt else 5
+            except ValueError:
+                print("Valor inválido. Usando 5 repetições.")
+                repeticoes = 5
+            print(banco.relatorio_comparativo_hash(repeticoes_busca=repeticoes))
 
         elif opcao == "0":
             print("Encerrando sistema...")
