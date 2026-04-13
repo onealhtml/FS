@@ -351,6 +351,38 @@ class Banco: # Implementa banco com tabela hash dinâmica para armazenar contas
         numeros_existentes = [dados[0] for dados in snapshot]
         numeros_inexistentes = [numero + 10_000_000 for numero in numeros_existentes] or [9_999_999]
 
+        # Baseline de busca linear para comparar com as estratégias de hash.
+        def _buscar_sequencial(dados_contas, numero):
+            for registro in dados_contas:
+                if registro[0] == numero:
+                    return registro
+            return None
+
+        inicio = time.perf_counter_ns()
+        for _ in range(repeticoes):
+            for numero in numeros_existentes:
+                _buscar_sequencial(snapshot, numero)
+        tempo_seq_existente_ms = (time.perf_counter_ns() - inicio) / 1_000_000
+
+        inicio = time.perf_counter_ns()
+        for _ in range(repeticoes):
+            for numero in numeros_inexistentes:
+                _buscar_sequencial(snapshot, numero)
+        tempo_seq_inexistente_ms = (time.perf_counter_ns() - inicio) / 1_000_000
+
+        total_buscas_existentes = max(1, repeticoes * len(numeros_existentes))
+        total_buscas_inexistentes = max(1, repeticoes * len(numeros_inexistentes))
+        baseline_busca_sequencial = {
+            "tempo_total_busca_existente_ms": tempo_seq_existente_ms,
+            "tempo_total_busca_inexistente_ms": tempo_seq_inexistente_ms,
+            "media_busca_existente_us": (tempo_seq_existente_ms * 1000) / total_buscas_existentes,
+            "media_busca_inexistente_us": (tempo_seq_inexistente_ms * 1000) / total_buscas_inexistentes,
+            "throughput_busca_existente_ops_s": total_buscas_existentes
+            / max(0.000001, tempo_seq_existente_ms / 1000),
+            "throughput_busca_inexistente_ops_s": total_buscas_inexistentes
+            / max(0.000001, tempo_seq_inexistente_ms / 1000),
+        }
+
         comparativo = {}
         for estrategia in self.HASH_ESTRATEGIAS:
             banco_teste = Banco(table_size=self._table_size, hash_strategy=estrategia, max_load_factor=self._max_load_factor)
@@ -373,9 +405,6 @@ class Banco: # Implementa banco com tabela hash dinâmica para armazenar contas
                     banco_teste._buscar_conta(numero)
             tempo_busca_inexistente_ms = (time.perf_counter_ns() - inicio) / 1_000_000
 
-            total_buscas_existentes = max(1, repeticoes * len(numeros_existentes))
-            total_buscas_inexistentes = max(1, repeticoes * len(numeros_inexistentes))
-
             metricas = banco_teste.obter_metricas_hash()
             metricas.update(
                 {
@@ -396,12 +425,14 @@ class Banco: # Implementa banco com tabela hash dinâmica para armazenar contas
             "total_contas": len(snapshot),
             "repeticoes_busca": repeticoes,
             "resultados": comparativo,
+            "baseline_busca_sequencial": baseline_busca_sequencial,
         }
 
     def relatorio_comparativo_hash(self, repeticoes_busca: int = 5): # Exibe comparativo formatado
         dados = self.comparar_estrategias_hash(repeticoes_busca=repeticoes_busca)
         estrategias = list(self.HASH_ESTRATEGIAS)
         resultados = dados["resultados"]
+        baseline = dados["baseline_busca_sequencial"]
 
         def _linha_metricas(rotulo: str, chave: str, formato: str):
             partes = [f"{estrategia}={format(resultados[estrategia][chave], formato)}" for estrategia in estrategias]
@@ -428,7 +459,28 @@ class Banco: # Implementa banco com tabela hash dinâmica para armazenar contas
             _linha_metricas("Busca inexistente média (us)", "media_busca_inexistente_us", ".4f"),
             _linha_metricas("Throughput busca existente (ops/s)", "throughput_busca_existente_ops_s", ".2f"),
             _linha_metricas("Throughput busca inexistente (ops/s)", "throughput_busca_inexistente_ops_s", ".2f"),
+            "",
+            "Baseline Sequencial",
+            f"- Busca existente média (us): {baseline['media_busca_existente_us']:.4f}",
+            f"- Busca inexistente média (us): {baseline['media_busca_inexistente_us']:.4f}",
+            f"- Throughput busca existente (ops/s): {baseline['throughput_busca_existente_ops_s']:.2f}",
+            f"- Throughput busca inexistente (ops/s): {baseline['throughput_busca_inexistente_ops_s']:.2f}",
         ]
+
+        if baseline["media_busca_existente_us"] > 0:
+            ganhos_existente = [
+                f"{estrategia}={baseline['media_busca_existente_us'] / resultados[estrategia]['media_busca_existente_us']:.2f}x"
+                for estrategia in estrategias
+            ]
+            linhas.append("- Ganho hash vs sequencial (existente): " + " | ".join(ganhos_existente))
+
+        if baseline["media_busca_inexistente_us"] > 0:
+            ganhos_inexistente = [
+                f"{estrategia}={baseline['media_busca_inexistente_us'] / resultados[estrategia]['media_busca_inexistente_us']:.2f}x"
+                for estrategia in estrategias
+            ]
+            linhas.append("- Ganho hash vs sequencial (inexistente): " + " | ".join(ganhos_inexistente))
+
         return "\n".join(linhas)
 
     @staticmethod

@@ -36,7 +36,7 @@ def mostrar_menu(): # Função para exibir o menu principal do banco
     print("7 - Importar contas via CSV") # Opção 7
     print("8 - Mostrar lista por bucket") # Opção 8
     print("9 - Mostrar métricas da hash") # Opção 9
-    print("10 - Comparar divisão x fnv1a") # Opção 10
+    print("10 - Comparar métodos de hash e busca") # Opção 10
     print("0 - Sair\n") # Opção para sair
 
 
