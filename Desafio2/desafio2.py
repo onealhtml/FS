@@ -38,13 +38,14 @@ def insertion_sort(arr):
     for i in range(1, n):
         key = arr[i]
         j = i - 1
-        comp += 1
-        while j >= 0 and arr[j] > key:
-            arr[j + 1] = arr[j]
-            trocas += 1
-            j -= 1
-            if j >= 0:
-                comp += 1
+        while j >= 0:
+            comp += 1
+            if arr[j] > key:
+                arr[j + 1] = arr[j]
+                trocas += 1
+                j -= 1
+            else:
+                break
         arr[j + 1] = key
         trocas += 1  # Conta a inserção final como troca/movimentação
     end = time.perf_counter()
@@ -152,13 +153,14 @@ def shell_sort(arr):
         for i in range(gap, n):
             temp = arr[i]
             j = i
-            comp += 1
-            while j >= gap and arr[j - gap] > temp:
-                arr[j] = arr[j - gap]
-                trocas += 1
-                j -= gap
-                if j >= gap:
-                    comp += 1
+            while j >= gap:
+                comp += 1
+                if arr[j - gap] > temp:
+                    arr[j] = arr[j - gap]
+                    trocas += 1
+                    j -= gap
+                else:
+                    break
             arr[j] = temp
             trocas += 1
         gap //= 2
@@ -200,6 +202,9 @@ def radix_sort(arr):
     start = time.perf_counter()
 
     if len(arr) == 0:
+        return arr, comp, trocas, time.perf_counter() - start
+
+    if len(arr) == 1:
         return arr, comp, trocas, time.perf_counter() - start
 
     # Adaptação para suportar negativos - encontra mínimo geral
@@ -279,24 +284,27 @@ def gera_vetor(tamanho, cenario):
 # MOTOR DE BENCHMARK (GENÉRICO)
 # =====================================================================
 
-def testar_algoritmo(func_algo, base_array, nome_algo, repeticoes):
+def testar_algoritmo(func_algo, base_array, nome_algo, repeticoes, cenario=None, tamanho=None):
     runs_comp = []
     runs_troca = []
     runs_tempo = []
 
-    # O timeout logic limitaria ou omitiria em testes reais acadêmicos N=100k de n^2
-    # Para cumprir o requisito, iteraremos normalmente.
+    CENARIOS_ALEATORIOS = {"aleatoria_pequena", "longa", "repetido", "muitos_repetidos"}
 
     for r in range(repeticoes):
-        # GARANTE que o array inicial é EXATAMENTE o mesmo em cada run/algoritmo
-        arr_copy = copy.deepcopy(base_array)
+        # Para cenários aleatórios, gera um vetor diferente a cada repetição
+        # garantindo variação estatística entre os 3 casos
+        if cenario in CENARIOS_ALEATORIOS and tamanho is not None:
+            arr_copy = gera_vetor(tamanho, cenario)
+        else:
+            # Cenários determinísticos (crescente, decrescente, etc.) são sempre iguais
+            arr_copy = copy.deepcopy(base_array)
         try:
             _, comp, trocas, tempo = func_algo(arr_copy)
             runs_comp.append(comp)
             runs_troca.append(trocas)
             runs_tempo.append(tempo)
         except RecursionError:
-            # Protege contra crashes no QuickSort em dados decrescentes profundos
             runs_comp.append(0)
             runs_troca.append(0)
             runs_tempo.append(0.0)
@@ -353,13 +361,14 @@ def executar_benchmark(tamanho_maximo_otimizacao=False):
                 continue
 
             print(f"- Processando Cenário: {cenario} | Massa: {tamanho}")
-            # Gera o vetor 1 unica vez para a massa/cenario
+            # Gera o vetor base 1 única vez (usado diretamente nos cenários determinísticos)
             base_array = gera_vetor(tamanho, cenario)
             massa_real = len(base_array)
 
             for nome_algo, func_algo in algoritmos.items():
                 r_comp, r_trc, r_tmp, m_comp, m_trc, m_tmp = testar_algoritmo(
-                    func_algo, base_array, nome_algo, repeticoes
+                    func_algo, base_array, nome_algo, repeticoes,
+                    cenario=cenario, tamanho=tamanho
                 )
 
                 res = {
@@ -478,10 +487,9 @@ def exibir_relatorio_terminal(df):
 # =====================================================================
 
 if __name__ == "__main__":
-    # Se você quiser rodar um teste rápido p/ não travar o terminal do professor, chame True no executar
-
-    resultados_finais = executar_benchmark(tamanho_maximo_otimizacao=False) # Usando True para simulação rápida
-    # Para o desafio completo N=100.000: mude para `executar_benchmark(tamanho_maximo_otimizacao=False)`
+    # tamanho_maximo_otimizacao=True  → massas reduzidas [100, 500, 1000]  (teste rápido)
+    # tamanho_maximo_otimizacao=False → massas completas [1000, 10000, 50000, 100000] (desafio real)
+    resultados_finais = executar_benchmark(tamanho_maximo_otimizacao=False)
 
     df_result = exportar_csv(resultados_finais)
     gerar_graficos(df_result)
