@@ -447,14 +447,26 @@ def gerar_graficos(df):
     warnings.filterwarnings("ignore")
     plt.style.use('ggplot')
 
+    # Paleta de cores fixa por algoritmo — consistente nos 3 gráficos
+    CORES = {
+        "Insertion Sort": "#E24B4A",  # vermelho
+        "Quick Sort":     "#378ADD",  # azul
+        "Merge Sort":     "#7F77DD",  # roxo
+        "Shell Sort":     "#639922",  # verde
+        "Selection Sort": "#EF9F27",  # laranja
+        "Radix Sort":     "#888780",  # cinza
+    }
+
     # Remove cenários de 0 ou 1 item para não poluir os eixos
     df_graf = df[df["Massa"] > 1].copy()
 
     # ── 1. Gráfico de Linhas: Tempo de Execução ──────────────────────────────
     plt.figure(figsize=(10, 6))
-    for algo in df_graf["Algoritmo"].unique():
+    for algo in CORES:
+        if algo not in df_graf["Algoritmo"].values:
+            continue
         subset = df_graf[df_graf["Algoritmo"] == algo].groupby("Massa")["Media_tempo"].mean().reset_index()
-        plt.plot(subset["Massa"], subset["Media_tempo"], marker="o", label=algo)
+        plt.plot(subset["Massa"], subset["Media_tempo"], marker="o", label=algo, color=CORES[algo])
 
     plt.title("Tempo de Execução Geral (Crescimento) x Tamanho da Massa")
     plt.xlabel("Massa de Dados (N)")
@@ -471,17 +483,20 @@ def gerar_graficos(df):
         index="Massa", columns="Algoritmo", values="Media_comp", aggfunc="mean"
     ).reset_index()
 
-    ax = pivot_comp.plot(x="Massa", kind="bar", figsize=(13, 6), width=0.8)
+    colunas_ord = ["Massa"] + [a for a in CORES if a in pivot_comp.columns]
+    pivot_comp = pivot_comp[colunas_ord]
+    cores_comp = [CORES[a] for a in colunas_ord if a != "Massa"]
+
+    ax = pivot_comp.plot(x="Massa", kind="bar", figsize=(13, 6), width=0.8, color=cores_comp)
     plt.title("Comparações Média - Agrupada por Algoritmo x Massa")
     plt.xlabel("Tamanho da Massa de Dados (N)")
     plt.ylabel("Qtd (Comparações) - Log Scale")
     plt.yscale("symlog")
     plt.xticks(rotation=0)
     plt.grid(True, axis="y")
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, title="Algoritmo")
 
-    # Radix Sort tem comparações = 0: adiciona anotação explicativa
-    radix_col = "Radix Sort"
-    if radix_col in pivot_comp.columns:
+    if "Radix Sort" in pivot_comp.columns:
         ax.annotate(
             "* Radix Sort: algoritmo\nnão-comparativo (comp=0)",
             xy=(0.01, 0.97), xycoords="axes fraction",
@@ -498,15 +513,19 @@ def gerar_graficos(df):
         index="Massa", columns="Algoritmo", values="Media_trocas", aggfunc="mean"
     ).reset_index()
 
-    ax = pivot_trc.plot(x="Massa", kind="bar", figsize=(13, 6), width=0.8)
+    colunas_ord = ["Massa"] + [a for a in CORES if a in pivot_trc.columns]
+    pivot_trc = pivot_trc[colunas_ord]
+    cores_trc = [CORES[a] for a in colunas_ord if a != "Massa"]
+
+    ax = pivot_trc.plot(x="Massa", kind="bar", figsize=(13, 6), width=0.8, color=cores_trc)
     plt.title("Trocas/Movimentações Média - Agrupada por Algoritmo x Massa")
     plt.xlabel("Tamanho da Massa de Dados (N)")
     plt.ylabel("Qtd (Trocas/Movimentações) - Log Scale")
     plt.yscale("symlog")
     plt.xticks(rotation=0)
     plt.grid(True, axis="y")
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0, title="Algoritmo")
 
-    # Anotação explicando a métrica do Radix
     ax.annotate(
         "* Radix Sort: métrica representa\nmovimentações (2×N×k), não trocas",
         xy=(0.01, 0.97), xycoords="axes fraction",
@@ -550,8 +569,8 @@ def exibir_relatorio_terminal(df):
 if __name__ == "__main__":
     # Se você quiser rodar um teste rápido p/ não travar o terminal do professor, chame True no executar
 
-    resultados_finais = executar_benchmark(tamanho_maximo_otimizacao=True) # Usando True para simulação rápida
-    # Para o desafio completo N=100.000: mude para `executar_benchmark(tamanho_maximo_otimizacao=False)`
+    resultados_finais = executar_benchmark(tamanho_maximo_otimizacao=False) # Usando True para simulação rápida
+    # Para o desafio completo N=100.000: mude para `executar_benchmark(tamanho_maximo_otimizacao=False)
 
     df_result = exportar_csv(resultados_finais)
     gerar_graficos(df_result)
