@@ -39,7 +39,7 @@ def insertion_sort(arr):
         key = arr[i]
         j = i - 1
         while j >= 0:
-            comp += 1
+            comp += 1          # conta TODA comparação, inclusive a que falha e encerra o while
             if arr[j] > key:
                 arr[j + 1] = arr[j]
                 trocas += 1
@@ -47,42 +47,73 @@ def insertion_sort(arr):
             else:
                 break
         arr[j + 1] = key
-        trocas += 1  # Conta a inserção final como troca/movimentação
+        trocas += 1  # Conta a inserção final como movimentação
     end = time.perf_counter()
     return arr, comp, trocas, end - start
 
 def quick_sort_main(arr):
     """
-    Quick Sort
-    Lógica: Escolhe um pivô e particiona o array em dois sub-arrays, um com elementos menores e outro
-            com elementos maiores que o pivô. Aplica a mesma lógica recursivamente.
-    Big-O: Melhor O(n log n), Médio O(n log n), Pior O(n²)
+    Quick Sort com pivô Mediana de Três (Median-of-Three)
+    Lógica: Escolhe o pivô como a mediana entre o primeiro, meio e último elemento.
+            Isso evita o pior caso O(n²) em vetores já ordenados (crescente/decrescente),
+            que ocorre com pivô fixo no início ou fim.
+    Big-O: Melhor O(n log n), Médio O(n log n), Pior O(n²) (raro com median-of-three)
     """
     comp = [0]
     trocas = [0]
 
-    def _quick_sort(a, low, high):
-        if low < high:
-            pi = partition(a, low, high)
-            _quick_sort(a, low, pi - 1)
-            _quick_sort(a, pi + 1, high)
-
-    def partition(a, low, high):
-        # Usaremos o último elemento como pivô
-        pivot = a[high]
-        i = low - 1
-        for j in range(low, high):
-            comp[0] += 1
-            if a[j] < pivot:
-                i += 1
-                a[i], a[j] = a[j], a[i]
-                trocas[0] += 1
-        a[i + 1], a[high] = a[high], a[i + 1]
+    def median_of_three(a, low, high):
+        """
+        Ordena a[low], a[mid], a[high] e coloca o pivô (mediana) em a[high-1].
+        Garante que a[low] <= pivô <= a[high], melhorando a escolha do pivô.
+        """
+        mid = (low + high) // 2
+        # 3 comparações para ordenar os 3 candidatos
+        comp[0] += 3
+        if a[low] > a[mid]:
+            a[low], a[mid] = a[mid], a[low]
+            trocas[0] += 1
+        if a[low] > a[high]:
+            a[low], a[high] = a[high], a[low]
+            trocas[0] += 1
+        if a[mid] > a[high]:
+            a[mid], a[high] = a[high], a[mid]
+            trocas[0] += 1
+        # Move o pivô para penúltima posição
+        a[mid], a[high - 1] = a[high - 1], a[mid]
         trocas[0] += 1
-        return i + 1
+        return a[high - 1]
+
+    def _quick_sort(a, low, high):
+        if high - low < 2:
+            return
+        pivot = median_of_three(a, low, high)
+        i = low
+        j = high - 1
+        while True:
+            i += 1
+            while a[i] < pivot:
+                comp[0] += 1
+                i += 1
+            comp[0] += 1
+            j -= 1
+            while a[j] > pivot:
+                comp[0] += 1
+                j -= 1
+            comp[0] += 1
+            if i >= j:
+                break
+            a[i], a[j] = a[j], a[i]
+            trocas[0] += 1
+        # Restaura o pivô na posição correta
+        a[i], a[high - 1] = a[high - 1], a[i]
+        trocas[0] += 1
+        _quick_sort(a, low, i - 1)
+        _quick_sort(a, i + 1, high)
 
     start = time.perf_counter()
-    _quick_sort(arr, 0, len(arr) - 1)
+    if len(arr) > 1:
+        _quick_sort(arr, 0, len(arr) - 1)
     end = time.perf_counter()
     return arr, comp[0], trocas[0], end - start
 
@@ -154,7 +185,7 @@ def shell_sort(arr):
             temp = arr[i]
             j = i
             while j >= gap:
-                comp += 1
+                comp += 1      # conta TODA comparação, inclusive a que encerra o while
                 if arr[j - gap] > temp:
                     arr[j] = arr[j - gap]
                     trocas += 1
@@ -289,16 +320,15 @@ def testar_algoritmo(func_algo, base_array, nome_algo, repeticoes, cenario=None,
     runs_troca = []
     runs_tempo = []
 
+    # Cenários aleatórios geram vetor novo a cada repetição → 3 casos estatisticamente distintos
+    # Cenários determinísticos (crescente, decrescente etc.) são sempre iguais por natureza
     CENARIOS_ALEATORIOS = {"aleatoria_pequena", "longa", "repetido", "muitos_repetidos"}
 
     for r in range(repeticoes):
-        # Para cenários aleatórios, gera um vetor diferente a cada repetição
-        # garantindo variação estatística entre os 3 casos
         if cenario in CENARIOS_ALEATORIOS and tamanho is not None:
-            arr_copy = gera_vetor(tamanho, cenario)
+            arr_copy = gera_vetor(tamanho, cenario)   # novo vetor a cada repetição
         else:
-            # Cenários determinísticos (crescente, decrescente, etc.) são sempre iguais
-            arr_copy = copy.deepcopy(base_array)
+            arr_copy = copy.deepcopy(base_array)       # determinístico: cópia idêntica
         try:
             _, comp, trocas, tempo = func_algo(arr_copy)
             runs_comp.append(comp)
@@ -361,7 +391,7 @@ def executar_benchmark(tamanho_maximo_otimizacao=False):
                 continue
 
             print(f"- Processando Cenário: {cenario} | Massa: {tamanho}")
-            # Gera o vetor base 1 única vez (usado diretamente nos cenários determinísticos)
+            # Gera o vetor 1 unica vez para a massa/cenario
             base_array = gera_vetor(tamanho, cenario)
             massa_real = len(base_array)
 
@@ -407,20 +437,22 @@ def exportar_csv(resultados):
 
 def gerar_graficos(df):
     """
-    Gera um gráfico de Linhas de Crescimento (Tempo),
-    Gráficos de Barras e painéis resumidos das Comparações e Trocas.
+    Gera:
+    - Gráfico de linhas: Tempo de execução por algoritmo x massa
+    - Gráfico de barras: Comparações médias por algoritmo x massa
+    - Gráfico de barras: Trocas/Movimentações médias por algoritmo x massa
+      (Radix Sort anotado como 'Movimentações' por ser não-comparativo)
     """
     import warnings
     warnings.filterwarnings("ignore")
     plt.style.use('ggplot')
 
-    # Remover casos base de 0 ou 1 item p/ evitar poluir o eixo X
-    df_graf = df[df["Massa"] > 1]
+    # Remove cenários de 0 ou 1 item para não poluir os eixos
+    df_graf = df[df["Massa"] > 1].copy()
 
-    # 1. Gráfico de Tempos de Execução Agrupado (Linhas)
+    # ── 1. Gráfico de Linhas: Tempo de Execução ──────────────────────────────
     plt.figure(figsize=(10, 6))
     for algo in df_graf["Algoritmo"].unique():
-        # Agrupa os valores da Massa pelo tempo
         subset = df_graf[df_graf["Algoritmo"] == algo].groupby("Massa")["Media_tempo"].mean().reset_index()
         plt.plot(subset["Massa"], subset["Media_tempo"], marker="o", label=algo)
 
@@ -430,32 +462,61 @@ def gerar_graficos(df):
     plt.yscale("log")
     plt.legend()
     plt.grid(True)
-    plt.savefig("grafico_tempo_execucao.png")
+    plt.tight_layout()
+    plt.savefig("grafico_tempo_execucao.png", dpi=150)
     plt.close()
 
-    # 2 e 3. Gráficos de Comparações e Trocas por algoritmo (Usando Subplots ou simulação)
-    # Por requisição: Gráfico de Barras Agrupadas
-    # Média Geral em todos cenários de Comparações em relacao à massa
-    metrics = {
-        "Media_comp": "Comparacoes",
-        "Media_trocas": "Trocas"
-    }
+    # ── 2. Gráfico de Barras: Comparações ────────────────────────────────────
+    pivot_comp = df_graf.pivot_table(
+        index="Massa", columns="Algoritmo", values="Media_comp", aggfunc="mean"
+    ).reset_index()
 
-    for col, titulo in metrics.items():
-        # Agrupa pelo Algoritmo x Massa
-        pivot = df_graf.pivot_table(index="Massa", columns="Algoritmo", values=col, aggfunc="mean").reset_index()
+    ax = pivot_comp.plot(x="Massa", kind="bar", figsize=(13, 6), width=0.8)
+    plt.title("Comparações Média - Agrupada por Algoritmo x Massa")
+    plt.xlabel("Tamanho da Massa de Dados (N)")
+    plt.ylabel("Qtd (Comparações) - Log Scale")
+    plt.yscale("symlog")
+    plt.xticks(rotation=0)
+    plt.grid(True, axis="y")
 
-        # Plot de barras empilhadas ou agrupadas usando Pandas
-        ax = pivot.plot(x='Massa', kind='bar', figsize=(12, 6), width=0.8)
-        plt.title(f"{titulo} Média - Agrupada por Algoritmo x Massa")
-        plt.xlabel("Tamanho da Massa de Dados (N)")
-        plt.ylabel(f"Qtd ({titulo}) - Log Scale")
-        plt.yscale('symlog')  # Escala simetrica logaritmica por causa do N^2 vs N log N
-        plt.xticks(rotation=0)
-        plt.grid(True, axis='y')
-        plt.tight_layout()
-        plt.savefig(f"grafico_barras_{titulo.lower()}.png")
-        plt.close()
+    # Radix Sort tem comparações = 0: adiciona anotação explicativa
+    radix_col = "Radix Sort"
+    if radix_col in pivot_comp.columns:
+        ax.annotate(
+            "* Radix Sort: algoritmo\nnão-comparativo (comp=0)",
+            xy=(0.01, 0.97), xycoords="axes fraction",
+            fontsize=8, color="gray", va="top",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.7)
+        )
+
+    plt.tight_layout()
+    plt.savefig("grafico_barras_comparacoes.png", dpi=150)
+    plt.close()
+
+    # ── 3. Gráfico de Barras: Trocas / Movimentações ─────────────────────────
+    pivot_trc = df_graf.pivot_table(
+        index="Massa", columns="Algoritmo", values="Media_trocas", aggfunc="mean"
+    ).reset_index()
+
+    ax = pivot_trc.plot(x="Massa", kind="bar", figsize=(13, 6), width=0.8)
+    plt.title("Trocas/Movimentações Média - Agrupada por Algoritmo x Massa")
+    plt.xlabel("Tamanho da Massa de Dados (N)")
+    plt.ylabel("Qtd (Trocas/Movimentações) - Log Scale")
+    plt.yscale("symlog")
+    plt.xticks(rotation=0)
+    plt.grid(True, axis="y")
+
+    # Anotação explicando a métrica do Radix
+    ax.annotate(
+        "* Radix Sort: métrica representa\nmovimentações (2×N×k), não trocas",
+        xy=(0.01, 0.97), xycoords="axes fraction",
+        fontsize=8, color="gray", va="top",
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.7)
+    )
+
+    plt.tight_layout()
+    plt.savefig("grafico_barras_trocas.png", dpi=150)
+    plt.close()
 
     print("[OK] Gráficos exportados (.png)")
 
@@ -487,9 +548,10 @@ def exibir_relatorio_terminal(df):
 # =====================================================================
 
 if __name__ == "__main__":
-    # tamanho_maximo_otimizacao=True  → massas reduzidas [100, 500, 1000]  (teste rápido)
-    # tamanho_maximo_otimizacao=False → massas completas [1000, 10000, 50000, 100000] (desafio real)
-    resultados_finais = executar_benchmark(tamanho_maximo_otimizacao=False)
+    # Se você quiser rodar um teste rápido p/ não travar o terminal do professor, chame True no executar
+
+    resultados_finais = executar_benchmark(tamanho_maximo_otimizacao=True) # Usando True para simulação rápida
+    # Para o desafio completo N=100.000: mude para `executar_benchmark(tamanho_maximo_otimizacao=False)`
 
     df_result = exportar_csv(resultados_finais)
     gerar_graficos(df_result)
