@@ -564,8 +564,6 @@ def exibir_relatorio_terminal(df):
 # =====================================================================
 
 if __name__ == "__main__":
-    # Se você quiser rodar um teste rápido p/ não travar o terminal do professor, chame True no executar
-
     resultados_finais = executar_benchmark(tamanho_maximo_otimizacao=False) # Usando True para simulação rápida
     # Para o desafio completo N=100.000: mude para "executar_benchmark(tamanho_maximo_otimizacao=False)"
 
