@@ -1,10 +1,7 @@
 import copy
-import csv
 import random
 import sys
 import time
-from collections import defaultdict
-import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from tabulate import tabulate
