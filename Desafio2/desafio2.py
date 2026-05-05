@@ -1,3 +1,8 @@
+# Desafio 2 - Fábrica de Software
+# Lorenzo Farias
+# Bernardo Soares Nunes
+# Pedro Cabral Buchaim
+
 import copy
 import random
 import sys
