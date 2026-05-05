@@ -1,3 +1,8 @@
+# Desafio 2 - Fábrica de Software
+# Lorenzo Farias
+# Bernardo Soares Nunes
+# Pedro Cabral Buchaim
+
 import copy
 import random
 import sys
@@ -382,8 +387,7 @@ def executar_benchmark(tamanho_maximo_otimizacao=False):
     for cenario in cenarios:
         for tamanho in tamanhos:
 
-            # Arrays vazios ou de 1 item não precisam variar tamanho pra N de verdade,
-            # rodam 1 vez.
+            # Arrays vazios ou de 1 item não precisam variar tamanho pra N de verdade, rodam uma vez
             if cenario in ["vazia", "um_item"] and tamanho != tamanhos[0]:
                 continue
 
