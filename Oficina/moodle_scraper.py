@@ -383,12 +383,15 @@ def coletar_calendario(page: Page) -> list[dict]:
     page.goto(f"{MOODLE_URL}/calendar/view.php?view=upcoming", timeout=15_000)
     page.wait_for_timeout(3_000)
 
-    eventos = page.locator("[data-event-id]")
+    # div[data-event-id] = cards completos do calendário.
+    # O Moodle também renderiza <a data-event-id> (links inline no mini-calendário)
+    # que causavam duplicatas; excluímos com o seletor de tag div.
+    eventos = page.locator("div[data-event-id]")
     if eventos.count() == 0:
         eventos = page.locator(".event")
 
     print(f"   → {eventos.count()} eventos encontrados")
-    return extrair_itens(eventos, "calendario")
+    return extrair_itens_calendario(eventos)
 
 
 def extrair_itens(itens: Locator, origem: str = "") -> list[dict]:
@@ -422,6 +425,65 @@ def extrair_itens(itens: Locator, origem: str = "") -> list[dict]:
 
     if SALVAR_BRUTO:
         _despejar_bruto(origem, coletados)
+    return deduplicar(coletados)
+
+
+def extrair_itens_calendario(itens: Locator) -> list[dict]:
+    """Extrai dados dos cards do calendário (estrutura diferente da timeline).
+
+    O calendário usa divs com data-event-title/data-event-eventtype nos atributos
+    e a data na segunda linha do texto — seletores da timeline não funcionam aqui.
+    """
+    coletados: list[dict] = []
+
+    for i in range(itens.count()):
+        item = itens.nth(i)
+        try:
+            # Nome: data-event-title é authoritative; a[href*='mod/'] retornaria
+            # "Adicionar Item" / "Ir à atividade" (botão do rodapé), não o título.
+            nome = (item.get_attribute("data-event-title") or "").strip()
+            if not nome:
+                try:
+                    nome = item.locator("h3.name").first.inner_text(timeout=500).strip()
+                except Exception:
+                    nome = item.inner_text(timeout=1_000).split("\n")[0].strip()
+
+            # Tipo de ocorrência: 'open', 'close', 'due', 'expectcompletionon' etc.
+            eventtype = (item.get_attribute("data-event-eventtype") or "").strip()
+
+            # Data: segunda linha do texto (após o título; antes da descrição).
+            prazo = "Sem prazo"
+            try:
+                linhas = item.inner_text(timeout=1_000).split("\n")
+                _ignorar = {"Evento da disciplina", "Evento do usuário", "Evento do curso"}
+                for linha in linhas[1:]:
+                    linha = linha.strip()
+                    if linha and linha not in _ignorar:
+                        prazo = linha
+                        break
+            except Exception:
+                pass
+
+            # Link: botão do rodapé do card (a.card-link aponta direto à atividade).
+            link = ""
+            try:
+                link = item.locator("a.card-link[href*='mod/']").first.get_attribute("href", timeout=500) or ""
+            except Exception:
+                pass
+
+            if nome and len(nome) > 2:
+                coletados.append({
+                    "nome": nome,
+                    "prazo": prazo,
+                    "link": link,
+                    "eventtype": eventtype,
+                    "tipo": identificar_tipo(link, nome),
+                })
+        except Exception:
+            continue
+
+    if SALVAR_BRUTO:
+        _despejar_bruto("calendario", coletados)
     return deduplicar(coletados)
 
 
@@ -472,13 +534,27 @@ def chave_dedupe(item: dict) -> str:
 
 
 def _mais_descritivo(atual: dict, novo: dict) -> dict:
-    """Funde dois registros do mesmo evento, ficando com a info mais útil de cada."""
-    venc, outro = atual, novo
-    # Nome: prefere o não-genérico e, entre dois bons, o mais longo/descritivo.
-    if eh_nome_generico(atual["nome"]) and not eh_nome_generico(novo["nome"]):
+    """Funde dois registros do mesmo evento, ficando com a info mais útil de cada.
+
+    Prioridade de eventtype: due/close > expectcompletionon > outros > open.
+    Isso garante que "Término de X" (close) derrote "Início de X" (open) e
+    fique com a data correta do prazo final.
+    """
+    _PRIO = {"due": 0, "close": 1, "expectcompletionon": 2, "open": 99}
+    prio_atual = _PRIO.get(atual.get("eventtype", ""), 50)
+    prio_novo = _PRIO.get(novo.get("eventtype", ""), 50)
+
+    if prio_novo < prio_atual:
         venc, outro = novo, atual
-    elif not eh_nome_generico(novo["nome"]) and len(novo["nome"]) > len(atual["nome"]):
-        venc, outro = novo, atual
+    elif prio_atual < prio_novo:
+        venc, outro = atual, novo
+    else:
+        # Mesmo nível: prefere nome não-genérico e mais descritivo.
+        venc, outro = atual, novo
+        if eh_nome_generico(atual["nome"]) and not eh_nome_generico(novo["nome"]):
+            venc, outro = novo, atual
+        elif not eh_nome_generico(novo["nome"]) and len(novo["nome"]) > len(atual["nome"]):
+            venc, outro = novo, atual
 
     fundido = dict(venc)
     # Prazo: completa se o vencedor não tiver um específico.
@@ -506,7 +582,13 @@ def deduplicar(itens: list[dict]) -> list[dict]:
         )
 
     # Cabeçalhos soltos de data ("Hoje", "Amanhã"...) não são atividades.
-    return [it for it in por_chave.values() if not eh_nome_generico(it["nome"])]
+    # eventtype é campo interno (dedup); não vai pro CSV/JSON.
+    resultado = []
+    for it in por_chave.values():
+        if not eh_nome_generico(it["nome"]):
+            it.pop("eventtype", None)
+            resultado.append(it)
+    return resultado
 
 
 def identificar_tipo(link: str, nome: str) -> str:
