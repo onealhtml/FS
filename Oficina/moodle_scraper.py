@@ -180,12 +180,28 @@ def navegador_aberto(processo: str) -> bool:
         return False  # sem tasklist/pgrep — segue e deixa o Playwright avisar
 
 
-def garantir_navegador_fechado(processo: str, nome: str) -> None:
-    """Bloqueia até o usuário fechar o navegador (libera o lock do perfil real)."""
-    while navegador_aberto(processo):
-        print(f"⚠️  O {nome} está aberto e trava o seu perfil.")
-        print("   Feche TODAS as janelas (e o ícone na bandeja / startup boost).")
-        input("   Depois pressione ENTER para continuar... ")
+def fechar_navegador(processo: str, nome: str) -> None:
+    """Fecha o navegador automaticamente se estiver aberto (libera o lock do perfil real)."""
+    if not navegador_aberto(processo):
+        return
+    print(f"⚠️  O {nome} está aberto — fechando automaticamente para liberar o perfil...")
+    try:
+        if sys.platform.startswith("win"):
+            subprocess.run(["taskkill", "/F", "/IM", processo], capture_output=True, check=False)
+        else:
+            subprocess.run(["pkill", "-f", processo], capture_output=True, check=False)
+    except FileNotFoundError:
+        print(f"   ⚠️  Não consegui fechar o {nome} automaticamente. Feche manualmente e rode de novo.")
+        sys.exit(1)
+
+    # Aguarda o processo realmente encerrar (até 10 s)
+    for _ in range(20):
+        time.sleep(0.5)
+        if not navegador_aberto(processo):
+            print(f"   ✅ {nome} fechado.\n")
+            return
+    print(f"   ⚠️  O {nome} ainda parece aberto. Feche manualmente e rode de novo.")
+    sys.exit(1)
 
 
 # Subpastas grandes/descartáveis do perfil — não precisamos delas pra logar,
@@ -243,7 +259,7 @@ def abrir_contexto(p, nav: dict):
     if USAR_PERFIL_REAL:
         perfil = escolher_perfil(nav)
         print(f"🧭 {nav['nome']} — SEU perfil real (perfil: {perfil})")
-        garantir_navegador_fechado(nav["processo"], nav["nome"])
+        fechar_navegador(nav["processo"], nav["nome"])
         # Direto = abre o perfil real em si; cópia = só se o Edge bloquear (Chromium 136+).
         user_data_dir = preparar_copia_perfil(nav, perfil) if COPIAR_PERFIL_REAL else nav["dir"]
         try:
