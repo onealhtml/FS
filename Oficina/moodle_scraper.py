@@ -45,7 +45,7 @@ COPIAR_PERFIL_REAL: bool = False
 SALVAR_BRUTO: bool = False
 
 # Pega dados do calendário ou da timeline?
-USAR_CALENDARIO: bool = False
+USAR_CALENDARIO: bool = True
 
 # Sinal de que o usuário tá logado
 SINAL_LOGADO = "a[href*='login/logout.php'], body.userloggedin, [data-region='timeline']"
