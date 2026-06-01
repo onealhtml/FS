@@ -4,11 +4,12 @@ Moodle Scraper — coleta de atividades pendentes no Moodle da UNISC
 Web scraping do painel do Moodle com Playwright.
 
 Login (sem apertar ENTER — o Playwright detecta sozinho quando você entra):
-  • Padrão (USAR_PERFIL_REAL=True): copia o SEU perfil real do Chrome/Edge pra
-    uma pasta de trabalho e abre a partir dela, carregando o seu login. A cópia
-    é necessária porque o Chrome 136+ recusa a automação (remote debugging) no
-    diretório de perfil padrão — uma proteção contra roubo de cookies. Exige o
-    navegador FECHADO antes de rodar (pra copiar o banco de cookies sem lock).
+  • Padrão (USAR_PERFIL_REAL=True): abre o SEU perfil real do Chrome/Edge, onde
+    você já está logado. O login/2FA grava no seu próprio perfil, então persiste
+    entre execuções. Exige o navegador FECHADO antes de rodar (o perfil fica
+    travado enquanto ele está aberto). Se o navegador recusar a automação no
+    perfil padrão (Chrome 136+), ligue COPIAR_PERFIL_REAL=True pra abrir de uma
+    cópia.
   • Alternativa (USAR_PERFIL_REAL=False): usa um perfil dedicado próprio do
     script e guarda os cookies em sessao_moodle.json — você loga 1x e as
     próximas execuções reentram sozinhas. Não precisa fechar o navegador.
@@ -52,12 +53,28 @@ NAVEGADOR_FORCADO: str | None = None
 # (Firefox sempre usa perfil dedicado — o Playwright roda o Firefox dele.)
 USAR_PERFIL_REAL: bool = True
 
+# Como abrir o perfil real:
+# False = abre o perfil DIRETO (funciona no Edge; o login/2FA grava no seu perfil
+#         de verdade, então persiste sozinho). É a estratégia padrão.
+# True  = abre a partir de uma CÓPIA do perfil. Só precisa disso se o navegador
+#         recusar a automação no perfil padrão (Chrome 136+ bloqueia por segurança).
+COPIAR_PERFIL_REAL: bool = False
+
+# Depuração: salva os itens CRUS (antes de deduplicar) em atividades_moodle_bruto.json.
+# Ligue pra inspecionar o que o Moodle está renderizando e ajustar os duplicados.
+SALVAR_BRUTO: bool = False
+
+# True  = coleta direto do calendário (próximos eventos).
+# False = coleta da timeline da página inicial (/my/) e só cai no calendário se ela vier vazia.
+USAR_CALENDARIO: bool = False
+
 # Sinal de "estou logado": só aparece no painel do Moodle, nunca na tela de
 # login. O link de logout existe em qualquer tema; os outros são reforço.
 SINAL_LOGADO = "a[href*='login/logout.php'], body.userloggedin, [data-region='timeline']"
 
 ARQUIVO_CSV = "atividades_moodle.csv"
 ARQUIVO_JSON = "atividades_moodle.json"
+ARQUIVO_BRUTO = "atividades_moodle_bruto.json"  # itens crus p/ depuração (SALVAR_BRUTO)
 PASTA_PERFIS = Path(__file__).resolve().parent  # onde ficam os .perfil_moodle_*
 # Cookies salvos entre execuções (inclui os de sessão, que o perfil em disco
 # descarta ao fechar). É isso que evita relogar/refazer 2FA toda vez.
@@ -153,6 +170,61 @@ def perfil_ativo_chromium(user_data_dir: Path) -> str:
         return "Default"
 
 
+def listar_perfis_chromium(user_data_dir: Path) -> list[dict]:
+    """Lista os perfis do Chrome/Edge lendo 'Local State' → profile.info_cache.
+
+    Cada item: id (pasta, ex. 'Profile 3'), nome (apelido do perfil), email e
+    se é o último usado. Só inclui perfis cuja pasta existe de fato em disco.
+    """
+    try:
+        estado = json.loads((user_data_dir / "Local State").read_text(encoding="utf-8"))
+    except Exception:
+        return [{"id": "Default", "nome": "Default", "email": "", "ultimo": True}]
+
+    perfil_cfg = estado.get("profile", {})
+    info = perfil_cfg.get("info_cache", {})
+    ultimo = perfil_cfg.get("last_used") or "Default"
+
+    perfis = [
+        {
+            "id": pid,
+            "nome": dados.get("name") or pid,
+            "email": dados.get("user_name", ""),
+            "ultimo": pid == ultimo,
+        }
+        for pid, dados in info.items()
+        if (user_data_dir / pid).exists()
+    ]
+    if not perfis:
+        return [{"id": "Default", "nome": "Default", "email": "", "ultimo": True}]
+    # Último usado primeiro, depois ordem alfabética pelo apelido.
+    perfis.sort(key=lambda x: (not x["ultimo"], x["nome"].lower()))
+    return perfis
+
+
+def escolher_perfil(nav: dict) -> str:
+    """Detecta os perfis do navegador e deixa o usuário escolher (padrão: último usado)."""
+    perfis = listar_perfis_chromium(nav["dir"])
+    if len(perfis) == 1:
+        return perfis[0]["id"]
+
+    print(f"\n👤 Perfis encontrados no {nav['nome']}:\n")
+    for i, pf in enumerate(perfis, 1):
+        email = f" — {pf['email']}" if pf["email"] else ""
+        marca = "  (último usado)" if pf["ultimo"] else ""
+        print(f"   {i}. {pf['nome']}{email}  [{pf['id']}]{marca}")
+    print()
+
+    padrao = next(i for i, pf in enumerate(perfis, 1) if pf["ultimo"])
+    while True:
+        escolha = input(f"Escolha o perfil [1-{len(perfis)}] (ENTER = {padrao}): ").strip()
+        if escolha == "":
+            return perfis[padrao - 1]["id"]
+        if escolha.isdigit() and 1 <= int(escolha) <= len(perfis):
+            return perfis[int(escolha) - 1]["id"]
+        print("   ⚠️  Opção inválida, tente de novo.")
+
+
 def navegador_aberto(processo: str) -> bool:
     """True se o navegador estiver rodando (e travando o perfil real)."""
     try:
@@ -188,20 +260,35 @@ _IGNORAR_NA_COPIA = shutil.ignore_patterns(
 
 
 def preparar_copia_perfil(nav: dict, perfil: str) -> Path:
-    """Copia o perfil real pra uma pasta NÃO-padrão e devolve esse user_data_dir.
+    """Garante uma cópia NÃO-padrão do perfil real e devolve esse user_data_dir.
 
     O Chrome 136+ recusa o remote debugging (que o Playwright usa) quando o
     user_data_dir é o padrão do navegador — é uma proteção contra roubo de
     cookies. Lançar a partir de uma cópia em pasta própria contorna isso, e como
     quem decifra os cookies é o próprio navegador instalado, o login real vem
     junto. Exige o navegador fechado pra copiar o banco de cookies sem lock.
+
+    A cópia é SEMEADA uma única vez. Depois ela é reaproveitada: é nela que o
+    2FA grava o cookie de 'confiar neste dispositivo'. Se recopiássemos do perfil
+    real a cada execução, esse cookie seria apagado e o 2FA voltaria toda vez.
     """
     origem = nav["dir"]
-    destino = PASTA_PERFIS / f".perfil_copia_{nav['canal']}"
+    sufixo = perfil.replace(" ", "_")
+    destino = PASTA_PERFIS / f".perfil_copia_{nav['canal']}_{sufixo}"
 
-    print(f"📁 Copiando seu perfil '{perfil}' pra uma pasta de trabalho...")
-    if destino.exists():
-        shutil.rmtree(destino, ignore_errors=True)
+    # Já semeada antes? Reaproveita (preserva o 'confiar neste dispositivo').
+    if (destino / perfil).exists():
+        print(f"♻️  Reaproveitando o perfil já copiado ({destino.name}/).")
+        print(f"   (apague essa pasta se quiser recopiar do seu perfil real)")
+        return destino
+
+    print(f"📁 Copiando seu perfil '{perfil}' pra uma pasta de trabalho (só desta vez)...")
+    origem_perfil = origem / perfil
+    if not origem_perfil.exists():
+        sys.exit(
+            f"❌ Não achei a pasta do perfil '{perfil}' em {origem}.\n"
+            f"   Abra o {nav['nome']}, confirme em qual perfil você usa o Moodle e tente de novo."
+        )
     destino.mkdir(parents=True, exist_ok=True)
 
     # 'Local State' (raiz) guarda a chave de cripto e o registro de perfis.
@@ -209,12 +296,6 @@ def preparar_copia_perfil(nav: dict, perfil: str) -> Path:
     if local_state.exists():
         shutil.copy2(local_state, destino / "Local State")
 
-    origem_perfil = origem / perfil
-    if not origem_perfil.exists():
-        sys.exit(
-            f"❌ Não achei a pasta do perfil '{perfil}' em {origem}.\n"
-            f"   Abra o {nav['nome']}, confirme em qual perfil você usa o Moodle e tente de novo."
-        )
     shutil.copytree(origem_perfil, destino / perfil, ignore=_IGNORAR_NA_COPIA, dirs_exist_ok=True)
     return destino
 
@@ -223,22 +304,27 @@ def abrir_contexto(p, nav: dict):
     """Abre o navegador: perfil REAL (Chrome/Edge) ou dedicado, conforme a config."""
     # Perfil real só faz sentido pra Chromium (Firefox o Playwright roda o dele).
     if USAR_PERFIL_REAL and nav["motor"] == "chromium":
-        perfil = perfil_ativo_chromium(nav["dir"])
+        perfil = escolher_perfil(nav)
         print(f"🧭 {nav['nome']} — SEU perfil real (perfil: {perfil})")
         garantir_navegador_fechado(nav["processo"], nav["nome"])
+        # Direto = abre o perfil real em si; cópia = só se o navegador bloquear (Chrome 136+).
+        user_data_dir = preparar_copia_perfil(nav, perfil) if COPIAR_PERFIL_REAL else nav["dir"]
         try:
-            copia = preparar_copia_perfil(nav, perfil)
             return p.chromium.launch_persistent_context(
-                user_data_dir=str(copia),
+                user_data_dir=str(user_data_dir),
                 channel=nav["canal"],
                 headless=False,
                 args=[f"--profile-directory={perfil}"],
                 no_viewport=True,
             )
         except Exception as erro:
+            dica = "" if COPIAR_PERFIL_REAL else (
+                "\n   Se o navegador recusar a automação no perfil padrão (típico do\n"
+                "   Chrome 136+), ligue COPIAR_PERFIL_REAL = True no topo do script."
+            )
             sys.exit(
-                f"❌ Não consegui abrir o {nav['nome']} a partir da cópia do seu perfil.\n"
-                f"   Confira se ele está TOTALMENTE fechado e tente de novo.\n"
+                f"❌ Não consegui abrir o {nav['nome']} com o seu perfil real.\n"
+                f"   Confira se ele está TOTALMENTE fechado e tente de novo.{dica}\n"
                 f"   Detalhe: {erro}"
             )
 
@@ -290,6 +376,22 @@ def salvar_sessao(context) -> None:
         pass
 
 
+def clicar_entrar_sala(page: Page) -> None:
+    """Na tela inicial do EAD, clica 'Entrar na Sala Virtual' pra ir direto às credenciais.
+
+    Se você já estiver logado, esse botão não aparece e seguimos sem fazer nada.
+    """
+    botao = page.locator(
+        "a:has-text('Entrar na Sala Virtual'), button:has-text('Entrar na Sala Virtual')"
+    ).first
+    try:
+        if botao.is_visible(timeout=5_000):
+            print("   ↪️  Clicando em 'Entrar na Sala Virtual'...")
+            botao.click()
+    except Exception:
+        pass  # já logado ou layout diferente — segue o fluxo normal
+
+
 def garantir_login(page: Page) -> None:
     """Espera (sem ENTER manual) até o painel logado aparecer.
 
@@ -301,6 +403,8 @@ def garantir_login(page: Page) -> None:
     print("   eu detecto sozinho quando você entrar (não precisa apertar nada).")
     print("   💡 Marque 'Continuar conectado' / 'Confiar neste dispositivo' pra")
     print("      não repetir o 2FA nas próximas execuções.")
+
+    clicar_entrar_sala(page)
 
     inicio = time.monotonic()
     try:
@@ -338,7 +442,7 @@ def coletar_timeline(page: Page) -> list[dict]:
         itens = page.locator(seletor)
         if itens.count() > 0:
             print(f"   ✅ {itens.count()} itens na timeline")
-            return extrair_itens(itens)
+            return extrair_itens(itens, "timeline")
 
     print("   ⚠️  Timeline vazia, tentando o calendário...")
     return coletar_calendario(page)
@@ -355,11 +459,11 @@ def coletar_calendario(page: Page) -> list[dict]:
         eventos = page.locator(".event")
 
     print(f"   → {eventos.count()} eventos encontrados")
-    return extrair_itens(eventos)
+    return extrair_itens(eventos, "calendario")
 
 
-def extrair_itens(itens: Locator) -> list[dict]:
-    """Extrai nome, prazo, link e tipo de cada item da lista."""
+def extrair_itens(itens: Locator, origem: str = "") -> list[dict]:
+    """Extrai nome, prazo, link e tipo de cada item da lista (e deduplica)."""
     coletados: list[dict] = []
 
     for i in range(itens.count()):
@@ -382,14 +486,28 @@ def extrair_itens(itens: Locator) -> list[dict]:
                     "nome": nome,
                     "prazo": prazo,
                     "link": link,
-                    # link sem parâmetros de ação (&action=...) — chave de dedupe
-                    "link_base": re.sub(r"[&?]action=\w+", "", link),
                     "tipo": identificar_tipo(link, nome),
                 })
         except Exception:
             continue
 
+    if SALVAR_BRUTO:
+        _despejar_bruto(origem, coletados)
     return deduplicar(coletados)
+
+
+def _despejar_bruto(origem: str, itens: list[dict]) -> None:
+    """Salva os itens crus (antes da dedupe) pra inspecionar duplicados (debug)."""
+    arquivo = Path(ARQUIVO_BRUTO)
+    dados: dict = {}
+    if arquivo.exists():
+        try:
+            dados = json.loads(arquivo.read_text(encoding="utf-8"))
+        except Exception:
+            dados = {}
+    dados[origem or "itens"] = itens
+    arquivo.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"   🐛 {len(itens)} itens crus salvos em {ARQUIVO_BRUTO} (origem: {origem or 'itens'})")
 
 
 def _primeiro_texto(item: Locator, seletores: list[str]) -> str:
@@ -408,46 +526,58 @@ def eh_nome_generico(nome: str) -> bool:
     return nome.lower().strip().rstrip(",") in NOMES_GENERICOS
 
 
-def deduplicar(itens: list[dict]) -> list[dict]:
-    """Remove duplicatas pelo link, mantendo o nome/prazo mais descritivo.
+def chave_dedupe(item: dict) -> str:
+    """Identidade de um evento, robusta a ruído de URL.
 
-    O calendário do Moodle renderiza cada evento em dois elementos (um com a
-    data, outro com o nome completo). Agrupamos por `link_base` e fundimos.
+    Pra atividade de módulo (.../mod/<tipo>/view.php?...id=<n>) usa 'mod:<tipo>:<n>',
+    ignorando &action, &forceview, #âncora, sesskey e a ordem dos parâmetros —
+    que mudam entre renders do MESMO evento e antes deixavam duplicados passar.
+    Sem link de módulo, cai pro nome normalizado (minúsculas, espaços colapsados).
     """
-    por_link: dict[str, dict] = {}
-    sem_link: list[dict] = []
+    link = item.get("link", "") or ""
+    m = re.search(r"/mod/([^/]+)/view\.php\?(?:[^#]*&)?id=(\d+)", link)
+    if m:
+        return f"mod:{m.group(1).lower()}:{m.group(2)}"
+    nome = re.sub(r"\s+", " ", item.get("nome", "")).strip().lower().rstrip(",")
+    return f"nome:{nome}"
 
+
+def _mais_descritivo(atual: dict, novo: dict) -> dict:
+    """Funde dois registros do mesmo evento, ficando com a info mais útil de cada."""
+    venc, outro = atual, novo
+    # Nome: prefere o não-genérico e, entre dois bons, o mais longo/descritivo.
+    if eh_nome_generico(atual["nome"]) and not eh_nome_generico(novo["nome"]):
+        venc, outro = novo, atual
+    elif not eh_nome_generico(novo["nome"]) and len(novo["nome"]) > len(atual["nome"]):
+        venc, outro = novo, atual
+
+    fundido = dict(venc)
+    # Prazo: completa se o vencedor não tiver um específico.
+    if fundido["prazo"] in ("Sem prazo", "Ver no Moodle") and outro["prazo"] not in ("Sem prazo", "Ver no Moodle"):
+        fundido["prazo"] = outro["prazo"]
+    # Link/tipo: herda do outro se o vencedor não tiver link.
+    if not fundido.get("link") and outro.get("link"):
+        fundido["link"] = outro["link"]
+        fundido["tipo"] = outro["tipo"]
+    return fundido
+
+
+def deduplicar(itens: list[dict]) -> list[dict]:
+    """Funde renders repetidos do mesmo evento e descarta cabeçalhos de data.
+
+    O calendário do Moodle renderiza um evento em vários elementos (data, nome,
+    links com parâmetros diferentes). Agrupamos pela identidade do módulo (ou
+    pelo nome normalizado, sem link) e mantemos o registro mais descritivo.
+    """
+    por_chave: dict[str, dict[str, str]] = {}
     for item in itens:
-        chave = item["link_base"]
-        if not chave:
-            sem_link.append(item)
-            continue
+        chave = chave_dedupe(item)
+        por_chave[chave] = (
+            _mais_descritivo(por_chave[chave], item) if chave in por_chave else item
+        )
 
-        if chave not in por_link:
-            por_link[chave] = item
-            continue
-
-        atual = por_link[chave]
-        # Prefere o nome não-genérico e mais descritivo.
-        if eh_nome_generico(atual["nome"]) and not eh_nome_generico(item["nome"]):
-            por_link[chave] = item
-        elif len(item["nome"]) > len(atual["nome"]) and not eh_nome_generico(item["nome"]):
-            por_link[chave] = item
-        # Completa o prazo se o registro vencedor não tiver um bom.
-        if por_link[chave]["prazo"] in ("Sem prazo", "Ver no Moodle") and item["prazo"] not in ("Sem prazo", "Ver no Moodle"):
-            por_link[chave]["prazo"] = item["prazo"]
-
-    vistos: set[str] = set()
-    sem_link_unicos = []
-    for item in sem_link:
-        if item["nome"] not in vistos and not eh_nome_generico(item["nome"]):
-            vistos.add(item["nome"])
-            sem_link_unicos.append(item)
-
-    resultado = list(por_link.values()) + sem_link_unicos
-    for r in resultado:
-        r.pop("link_base", None)  # campo auxiliar, fora do output final
-    return resultado
+    # Cabeçalhos soltos de data ("Hoje", "Amanhã"...) não são atividades.
+    return [it for it in por_chave.values() if not eh_nome_generico(it["nome"])]
 
 
 def identificar_tipo(link: str, nome: str) -> str:
@@ -521,7 +651,7 @@ def main() -> None:
         page.goto(f"{MOODLE_URL}/my/", timeout=30_000)
         garantir_login(page)
 
-        atividades = coletar_timeline(page)
+        atividades = coletar_calendario(page) if USAR_CALENDARIO else coletar_timeline(page)
         if usa_sessao_file:
             salvar_sessao(context)           # guarda a sessão pra próxima vez
         context.close()
