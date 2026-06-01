@@ -611,6 +611,7 @@ def main() -> None:
 
     mostrar(atividades)
     salvar(atividades)
+    input("Pressione Enter para sair...")
 
 
 if __name__ == "__main__":
