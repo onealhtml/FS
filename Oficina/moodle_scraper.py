@@ -4,10 +4,11 @@ Moodle Scraper — coleta de atividades pendentes no Moodle da UNISC
 Web scraping do painel do Moodle com Playwright.
 
 Login (sem apertar ENTER — o Playwright detecta sozinho quando você entra):
-  • Padrão (USAR_PERFIL_REAL=True): usa o SEU perfil real do Chrome/Edge, onde
-    você já está logado. Se o seu login for persistente (continua logado ao
-    reabrir o navegador), aqui também entra direto. Exige o navegador FECHADO
-    antes de rodar (o navegador trava o perfil enquanto aberto).
+  • Padrão (USAR_PERFIL_REAL=True): copia o SEU perfil real do Chrome/Edge pra
+    uma pasta de trabalho e abre a partir dela, carregando o seu login. A cópia
+    é necessária porque o Chrome 136+ recusa a automação (remote debugging) no
+    diretório de perfil padrão — uma proteção contra roubo de cookies. Exige o
+    navegador FECHADO antes de rodar (pra copiar o banco de cookies sem lock).
   • Alternativa (USAR_PERFIL_REAL=False): usa um perfil dedicado próprio do
     script e guarda os cookies em sessao_moodle.json — você loga 1x e as
     próximas execuções reentram sozinhas. Não precisa fechar o navegador.
@@ -26,6 +27,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -107,8 +109,27 @@ def navegadores_instalados() -> list[dict]:
     ]
 
 
+def menu_navegador(instalados: list[dict]) -> dict:
+    """Mostra os navegadores detectados e deixa o usuário escolher pelo número."""
+    print("🌐 Navegadores encontrados:\n")
+    for i, nav in enumerate(instalados, 1):
+        extra = ""
+        if nav["motor"] == "chromium":
+            extra = f"  (perfil em uso: {perfil_ativo_chromium(nav['dir'])})"
+        print(f"   {i}. {nav['nome']}{extra}")
+    print()
+
+    while True:
+        escolha = input(f"Escolha o navegador [1-{len(instalados)}] (ENTER = 1): ").strip()
+        if escolha == "":
+            return instalados[0]
+        if escolha.isdigit() and 1 <= int(escolha) <= len(instalados):
+            return instalados[int(escolha) - 1]
+        print("   ⚠️  Opção inválida, tente de novo.")
+
+
 def escolher_navegador() -> dict:
-    """Respeita NAVEGADOR_FORCADO; senão usa o primeiro navegador instalado."""
+    """Respeita NAVEGADOR_FORCADO; senão detecta e pergunta qual navegador usar."""
     instalados = navegadores_instalados()
     if not instalados:
         sys.exit("❌ Não encontrei Chrome, Edge nem Firefox neste computador.")
@@ -117,7 +138,10 @@ def escolher_navegador() -> dict:
             if nav["canal"] == NAVEGADOR_FORCADO:
                 return nav
         sys.exit(f"❌ NAVEGADOR_FORCADO='{NAVEGADOR_FORCADO}' não está instalado aqui.")
-    return instalados[0]
+    if len(instalados) == 1:
+        print(f"🌐 Único navegador encontrado: {instalados[0]['nome']}\n")
+        return instalados[0]
+    return menu_navegador(instalados)
 
 
 def perfil_ativo_chromium(user_data_dir: Path) -> str:
@@ -154,6 +178,47 @@ def garantir_navegador_fechado(processo: str, nome: str) -> None:
         input("   Depois pressione ENTER para continuar... ")
 
 
+# Subpastas grandes/descartáveis do perfil — não precisamos delas pra logar,
+# e copiá-las deixaria a cópia lenta e pesada (caches de GB).
+_IGNORAR_NA_COPIA = shutil.ignore_patterns(
+    "Cache", "Code Cache", "GPUCache", "ShaderCache", "GraphiteDawnCache",
+    "DawnGraphiteCache", "DawnWebGPUCache", "Service Worker", "component_crx_cache",
+    "Crashpad", "*.log", "*.tmp",
+)
+
+
+def preparar_copia_perfil(nav: dict, perfil: str) -> Path:
+    """Copia o perfil real pra uma pasta NÃO-padrão e devolve esse user_data_dir.
+
+    O Chrome 136+ recusa o remote debugging (que o Playwright usa) quando o
+    user_data_dir é o padrão do navegador — é uma proteção contra roubo de
+    cookies. Lançar a partir de uma cópia em pasta própria contorna isso, e como
+    quem decifra os cookies é o próprio navegador instalado, o login real vem
+    junto. Exige o navegador fechado pra copiar o banco de cookies sem lock.
+    """
+    origem = nav["dir"]
+    destino = PASTA_PERFIS / f".perfil_copia_{nav['canal']}"
+
+    print(f"📁 Copiando seu perfil '{perfil}' pra uma pasta de trabalho...")
+    if destino.exists():
+        shutil.rmtree(destino, ignore_errors=True)
+    destino.mkdir(parents=True, exist_ok=True)
+
+    # 'Local State' (raiz) guarda a chave de cripto e o registro de perfis.
+    local_state = origem / "Local State"
+    if local_state.exists():
+        shutil.copy2(local_state, destino / "Local State")
+
+    origem_perfil = origem / perfil
+    if not origem_perfil.exists():
+        sys.exit(
+            f"❌ Não achei a pasta do perfil '{perfil}' em {origem}.\n"
+            f"   Abra o {nav['nome']}, confirme em qual perfil você usa o Moodle e tente de novo."
+        )
+    shutil.copytree(origem_perfil, destino / perfil, ignore=_IGNORAR_NA_COPIA, dirs_exist_ok=True)
+    return destino
+
+
 def abrir_contexto(p, nav: dict):
     """Abre o navegador: perfil REAL (Chrome/Edge) ou dedicado, conforme a config."""
     # Perfil real só faz sentido pra Chromium (Firefox o Playwright roda o dele).
@@ -162,8 +227,9 @@ def abrir_contexto(p, nav: dict):
         print(f"🧭 {nav['nome']} — SEU perfil real (perfil: {perfil})")
         garantir_navegador_fechado(nav["processo"], nav["nome"])
         try:
+            copia = preparar_copia_perfil(nav, perfil)
             return p.chromium.launch_persistent_context(
-                user_data_dir=str(nav["dir"]),
+                user_data_dir=str(copia),
                 channel=nav["canal"],
                 headless=False,
                 args=[f"--profile-directory={perfil}"],
@@ -171,7 +237,7 @@ def abrir_contexto(p, nav: dict):
             )
         except Exception as erro:
             sys.exit(
-                f"❌ Não consegui abrir o {nav['nome']} com o seu perfil real.\n"
+                f"❌ Não consegui abrir o {nav['nome']} a partir da cópia do seu perfil.\n"
                 f"   Confira se ele está TOTALMENTE fechado e tente de novo.\n"
                 f"   Detalhe: {erro}"
             )
