@@ -3,14 +3,14 @@ Moodle Scraper — coleta de atividades pendentes no Moodle da UNISC
 ==================================================================
 Web scraping do painel do Moodle com Playwright.
 
-Login sem precisar apertar ENTER:
-  • O script abre o navegador num PERFIL DEDICADO (próprio dele) e vai pro
-    painel. Se já houver sessão salva, segue direto.
-  • Se precisar logar, você digita usuário/senha (ou faz o SSO) na janela que
-    abriu — o Playwright DETECTA SOZINHO quando o login termina (o painel
-    logado aparece) e já começa a coletar.
-  • A sessão fica salva no perfil dedicado, então nas próximas execuções
-    costuma reentrar sem digitar nada.
+Login (sem apertar ENTER — o Playwright detecta sozinho quando você entra):
+  • Padrão (USAR_PERFIL_REAL=True): usa o SEU perfil real do Chrome/Edge, onde
+    você já está logado. Se o seu login for persistente (continua logado ao
+    reabrir o navegador), aqui também entra direto. Exige o navegador FECHADO
+    antes de rodar (o navegador trava o perfil enquanto aberto).
+  • Alternativa (USAR_PERFIL_REAL=False): usa um perfil dedicado próprio do
+    script e guarda os cookies em sessao_moodle.json — você loga 1x e as
+    próximas execuções reentram sozinhas. Não precisa fechar o navegador.
 
 Setup (uma vez):
     pip install -r requirements.txt
@@ -26,6 +26,7 @@ import csv
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -43,6 +44,12 @@ MOODLE_URL = "https://portalvirtual.unisc.br/moodle"
 # Deixe None pra usar o 1º navegador instalado; ou fixe "chrome"/"msedge"/"firefox".
 NAVEGADOR_FORCADO: str | None = None
 
+# True  = usa o SEU perfil real do Chrome/Edge (precisa FECHAR o navegador antes).
+#         Zero login só se o seu login for persistente (continua logado ao reabrir).
+# False = usa um perfil dedicado + sessao_moodle.json (loga 1x, depois reusa).
+# (Firefox sempre usa perfil dedicado — o Playwright roda o Firefox dele.)
+USAR_PERFIL_REAL: bool = True
+
 # Sinal de "estou logado": só aparece no painel do Moodle, nunca na tela de
 # login. O link de logout existe em qualquer tema; os outros são reforço.
 SINAL_LOGADO = "a[href*='login/logout.php'], body.userloggedin, [data-region='timeline']"
@@ -50,6 +57,9 @@ SINAL_LOGADO = "a[href*='login/logout.php'], body.userloggedin, [data-region='ti
 ARQUIVO_CSV = "atividades_moodle.csv"
 ARQUIVO_JSON = "atividades_moodle.json"
 PASTA_PERFIS = Path(__file__).resolve().parent  # onde ficam os .perfil_moodle_*
+# Cookies salvos entre execuções (inclui os de sessão, que o perfil em disco
+# descarta ao fechar). É isso que evita relogar/refazer 2FA toda vez.
+SESSAO_FILE = PASTA_PERFIS / "sessao_moodle.json"
 
 TIMEOUT_PADRAO = 10_000   # ms — operações normais
 TIMEOUT_LOGIN = 300_000   # ms — quanto o script espera o usuário logar (5 min)
@@ -63,32 +73,36 @@ NOMES_GENERICOS = {
 
 # ──────────────────────────── Navegador / login ─────────────────────────────
 def navegadores_instalados() -> list[dict]:
-    """Lista os navegadores disponíveis (ordem de preferência: Chrome, Edge, Firefox)."""
+    """Lista os navegadores disponíveis (ordem de preferência: Chrome, Edge, Firefox).
+
+    Cada item traz: canal, nome, motor, processo (p/ checar se está aberto) e
+    `dir` (diretório de perfil real do usuário).
+    """
     home = Path.home()
     if sys.platform.startswith("win"):
         local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
         roaming = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
         candidatos = [
-            ("chrome", "Chrome", "chromium", local / "Google/Chrome/User Data"),
-            ("msedge", "Edge", "chromium", local / "Microsoft/Edge/User Data"),
-            ("firefox", "Firefox", "firefox", roaming / "Mozilla/Firefox"),
+            ("chrome", "Chrome", "chromium", "chrome.exe", local / "Google/Chrome/User Data"),
+            ("msedge", "Edge", "chromium", "msedge.exe", local / "Microsoft/Edge/User Data"),
+            ("firefox", "Firefox", "firefox", "firefox.exe", roaming / "Mozilla/Firefox"),
         ]
     elif sys.platform == "darwin":
         sup = home / "Library/Application Support"
         candidatos = [
-            ("chrome", "Chrome", "chromium", sup / "Google/Chrome"),
-            ("msedge", "Edge", "chromium", sup / "Microsoft Edge"),
-            ("firefox", "Firefox", "firefox", sup / "Firefox"),
+            ("chrome", "Chrome", "chromium", "Google Chrome", sup / "Google/Chrome"),
+            ("msedge", "Edge", "chromium", "Microsoft Edge", sup / "Microsoft Edge"),
+            ("firefox", "Firefox", "firefox", "firefox", sup / "Firefox"),
         ]
     else:  # linux
         candidatos = [
-            ("chrome", "Chrome", "chromium", home / ".config/google-chrome"),
-            ("msedge", "Edge", "chromium", home / ".config/microsoft-edge"),
-            ("firefox", "Firefox", "firefox", home / ".mozilla/firefox"),
+            ("chrome", "Chrome", "chromium", "chrome", home / ".config/google-chrome"),
+            ("msedge", "Edge", "chromium", "msedge", home / ".config/microsoft-edge"),
+            ("firefox", "Firefox", "firefox", "firefox", home / ".mozilla/firefox"),
         ]
     return [
-        {"canal": c, "nome": n, "motor": m}
-        for c, n, m, caminho in candidatos
+        {"canal": c, "nome": n, "motor": m, "processo": proc, "dir": caminho}
+        for c, n, m, proc, caminho in candidatos
         if caminho.exists()
     ]
 
@@ -106,8 +120,63 @@ def escolher_navegador() -> dict:
     return instalados[0]
 
 
+def perfil_ativo_chromium(user_data_dir: Path) -> str:
+    """Descobre o perfil em uso lendo o 'Local State' do Chrome/Edge (cai pra Default)."""
+    try:
+        estado = json.loads((user_data_dir / "Local State").read_text(encoding="utf-8"))
+        return estado.get("profile", {}).get("last_used") or "Default"
+    except Exception:
+        return "Default"
+
+
+def navegador_aberto(processo: str) -> bool:
+    """True se o navegador estiver rodando (e travando o perfil real)."""
+    try:
+        if sys.platform.startswith("win"):
+            saida = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {processo}"],
+                capture_output=True, text=True, check=False,
+            )
+            return processo.lower() in saida.stdout.lower()
+        saida = subprocess.run(
+            ["pgrep", "-f", processo], capture_output=True, text=True, check=False,
+        )
+        return bool(saida.stdout.strip())
+    except FileNotFoundError:
+        return False  # sem tasklist/pgrep — segue e deixa o Playwright avisar
+
+
+def garantir_navegador_fechado(processo: str, nome: str) -> None:
+    """Bloqueia até o usuário fechar o navegador (libera o lock do perfil real)."""
+    while navegador_aberto(processo):
+        print(f"⚠️  O {nome} está aberto e trava o seu perfil.")
+        print("   Feche TODAS as janelas (e o ícone na bandeja / startup boost).")
+        input("   Depois pressione ENTER para continuar... ")
+
+
 def abrir_contexto(p, nav: dict):
-    """Abre o navegador num perfil dedicado (a sessão de login fica salva nele)."""
+    """Abre o navegador: perfil REAL (Chrome/Edge) ou dedicado, conforme a config."""
+    # Perfil real só faz sentido pra Chromium (Firefox o Playwright roda o dele).
+    if USAR_PERFIL_REAL and nav["motor"] == "chromium":
+        perfil = perfil_ativo_chromium(nav["dir"])
+        print(f"🧭 {nav['nome']} — SEU perfil real (perfil: {perfil})")
+        garantir_navegador_fechado(nav["processo"], nav["nome"])
+        try:
+            return p.chromium.launch_persistent_context(
+                user_data_dir=str(nav["dir"]),
+                channel=nav["canal"],
+                headless=False,
+                args=[f"--profile-directory={perfil}"],
+                no_viewport=True,
+            )
+        except Exception as erro:
+            sys.exit(
+                f"❌ Não consegui abrir o {nav['nome']} com o seu perfil real.\n"
+                f"   Confira se ele está TOTALMENTE fechado e tente de novo.\n"
+                f"   Detalhe: {erro}"
+            )
+
+    # Perfil dedicado (padrão do Firefox, ou USAR_PERFIL_REAL=False).
     perfil = PASTA_PERFIS / f".perfil_moodle_{nav['canal']}"
     print(f"🧭 {nav['nome']} — perfil dedicado ({perfil.name}/)")
     try:
@@ -130,15 +199,42 @@ def abrir_contexto(p, nav: dict):
         )
 
 
+def restaurar_sessao(context) -> None:
+    """Reinjeta os cookies salvos da última vez (incluindo os de sessão).
+
+    É o que mantém você logado entre execuções: o perfil em disco descarta os
+    cookies de sessão ao fechar, então nós os guardamos à parte e devolvemos.
+    """
+    if not SESSAO_FILE.exists():
+        return
+    try:
+        dados = json.loads(SESSAO_FILE.read_text(encoding="utf-8"))
+        cookies = dados.get("cookies", [])
+        if cookies:
+            context.add_cookies(cookies)
+    except Exception:
+        pass  # sessão corrompida/inválida — segue pro login normal
+
+
+def salvar_sessao(context) -> None:
+    """Salva todos os cookies atuais (Moodle + provedor SSO) pra próxima vez."""
+    try:
+        context.storage_state(path=str(SESSAO_FILE))
+    except Exception:
+        pass
+
+
 def garantir_login(page: Page) -> None:
     """Espera (sem ENTER manual) até o painel logado aparecer.
 
-    Se já houver sessão salva, resolve em segundos. Senão, o usuário loga na
+    Se a sessão salva ainda valer, resolve em segundos. Senão, o usuário loga na
     janela e o Playwright detecta o fim do login sozinho.
     """
     print("⏳ Abrindo o painel...")
     print("   Se aparecer a tela de login, faça o login na janela que abriu —")
     print("   eu detecto sozinho quando você entrar (não precisa apertar nada).")
+    print("   💡 Marque 'Continuar conectado' / 'Confiar neste dispositivo' pra")
+    print("      não repetir o 2FA nas próximas execuções.")
 
     inicio = time.monotonic()
     try:
@@ -345,16 +441,23 @@ def main() -> None:
     print("🎓 Moodle Scraper — web scraping do painel do Moodle\n")
 
     nav = escolher_navegador()
+    # No perfil real, a persistência é o próprio perfil — não exportamos cookies
+    # pra um arquivo (evita despejar TODOS os seus cookies em disco).
+    usa_sessao_file = not (USAR_PERFIL_REAL and nav["motor"] == "chromium")
 
     with sync_playwright() as p:
         context = abrir_contexto(p, nav)
         context.set_default_timeout(TIMEOUT_PADRAO)
+        if usa_sessao_file:
+            restaurar_sessao(context)        # devolve os cookies salvos
         page = context.pages[0] if context.pages else context.new_page()
 
         page.goto(f"{MOODLE_URL}/my/", timeout=30_000)
         garantir_login(page)
 
         atividades = coletar_timeline(page)
+        if usa_sessao_file:
+            salvar_sessao(context)           # guarda a sessão pra próxima vez
         context.close()
 
     mostrar(atividades)
