@@ -3,20 +3,20 @@ Moodle Scraper — coleta de atividades pendentes no Moodle da UNISC
 ==================================================================
 Web scraping do painel do Moodle com Playwright.
 
+Usa SEMPRE o Microsoft Edge instalado no sistema.
+
 Login (sem apertar ENTER — o Playwright detecta sozinho quando você entra):
-  • Padrão (USAR_PERFIL_REAL=True): abre o SEU perfil real do Chrome/Edge, onde
-    você já está logado. O login/2FA grava no seu próprio perfil, então persiste
-    entre execuções. Exige o navegador FECHADO antes de rodar (o perfil fica
-    travado enquanto ele está aberto). Se o navegador recusar a automação no
-    perfil padrão (Chrome 136+), ligue COPIAR_PERFIL_REAL=True pra abrir de uma
-    cópia.
+  • Padrão (USAR_PERFIL_REAL=True): abre o SEU perfil real do Edge, onde você já
+    está logado. O login/2FA grava no seu próprio perfil, então persiste entre
+    execuções. Exige o Edge FECHADO antes de rodar (o perfil fica travado
+    enquanto ele está aberto). Na tela do EAD, o script clica sozinho em
+    "Entrar na Sala Virtual" (login unificado) pra ir direto às credenciais.
   • Alternativa (USAR_PERFIL_REAL=False): usa um perfil dedicado próprio do
     script e guarda os cookies em sessao_moodle.json — você loga 1x e as
-    próximas execuções reentram sozinhas. Não precisa fechar o navegador.
+    próximas execuções reentram sozinhas. Não precisa fechar o Edge.
 
 Setup (uma vez):
-    pip install -r requirements.txt
-    playwright install firefox     # Chrome/Edge usam a instalação do sistema
+    pip install -r requirements.txt   # o Edge usa a instalação do sistema
 
 Uso:
     python moodle_scraper.py
@@ -44,20 +44,16 @@ from playwright.sync_api import (
 # ─────────────────────────────── Configuração ───────────────────────────────
 MOODLE_URL = "https://portalvirtual.unisc.br/moodle"
 
-# Deixe None pra usar o 1º navegador instalado; ou fixe "chrome"/"msedge"/"firefox".
-NAVEGADOR_FORCADO: str | None = None
-
-# True  = usa o SEU perfil real do Chrome/Edge (precisa FECHAR o navegador antes).
+# True  = usa o SEU perfil real do Edge (precisa FECHAR o Edge antes).
 #         Zero login só se o seu login for persistente (continua logado ao reabrir).
 # False = usa um perfil dedicado + sessao_moodle.json (loga 1x, depois reusa).
-# (Firefox sempre usa perfil dedicado — o Playwright roda o Firefox dele.)
 USAR_PERFIL_REAL: bool = True
 
 # Como abrir o perfil real:
-# False = abre o perfil DIRETO (funciona no Edge; o login/2FA grava no seu perfil
-#         de verdade, então persiste sozinho). É a estratégia padrão.
-# True  = abre a partir de uma CÓPIA do perfil. Só precisa disso se o navegador
-#         recusar a automação no perfil padrão (Chrome 136+ bloqueia por segurança).
+# False = abre o perfil DIRETO (o login/2FA grava no seu perfil de verdade, então
+#         persiste sozinho). É a estratégia padrão.
+# True  = abre a partir de uma CÓPIA do perfil. Só precisa disso se o Edge recusar
+#         a automação no perfil padrão (Chromium 136+ bloqueia por segurança).
 COPIAR_PERFIL_REAL: bool = False
 
 # Depuração: salva os itens CRUS (antes de deduplicar) em atividades_moodle_bruto.json.
@@ -91,87 +87,29 @@ NOMES_GENERICOS = {
 
 
 # ──────────────────────────── Navegador / login ─────────────────────────────
-def navegadores_instalados() -> list[dict]:
-    """Lista os navegadores disponíveis (ordem de preferência: Chrome, Edge, Firefox).
-
-    Cada item traz: canal, nome, motor, processo (p/ checar se está aberto) e
-    `dir` (diretório de perfil real do usuário).
-    """
+def navegador_edge() -> dict:
+    """Descreve o Microsoft Edge no SO atual (e o diretório do seu perfil real)."""
     home = Path.home()
     if sys.platform.startswith("win"):
-        local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
-        roaming = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-        candidatos = [
-            ("chrome", "Chrome", "chromium", "chrome.exe", local / "Google/Chrome/User Data"),
-            ("msedge", "Edge", "chromium", "msedge.exe", local / "Microsoft/Edge/User Data"),
-            ("firefox", "Firefox", "firefox", "firefox.exe", roaming / "Mozilla/Firefox"),
-        ]
+        user_data = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local")) / "Microsoft/Edge/User Data"
+        processo = "msedge.exe"
     elif sys.platform == "darwin":
-        sup = home / "Library/Application Support"
-        candidatos = [
-            ("chrome", "Chrome", "chromium", "Google Chrome", sup / "Google/Chrome"),
-            ("msedge", "Edge", "chromium", "Microsoft Edge", sup / "Microsoft Edge"),
-            ("firefox", "Firefox", "firefox", "firefox", sup / "Firefox"),
-        ]
+        user_data = home / "Library/Application Support/Microsoft Edge"
+        processo = "Microsoft Edge"
     else:  # linux
-        candidatos = [
-            ("chrome", "Chrome", "chromium", "chrome", home / ".config/google-chrome"),
-            ("msedge", "Edge", "chromium", "msedge", home / ".config/microsoft-edge"),
-            ("firefox", "Firefox", "firefox", "firefox", home / ".mozilla/firefox"),
-        ]
-    return [
-        {"canal": c, "nome": n, "motor": m, "processo": proc, "dir": caminho}
-        for c, n, m, proc, caminho in candidatos
-        if caminho.exists()
-    ]
+        user_data = home / ".config/microsoft-edge"
+        processo = "msedge"
 
-
-def menu_navegador(instalados: list[dict]) -> dict:
-    """Mostra os navegadores detectados e deixa o usuário escolher pelo número."""
-    print("🌐 Navegadores encontrados:\n")
-    for i, nav in enumerate(instalados, 1):
-        extra = ""
-        if nav["motor"] == "chromium":
-            extra = f"  (perfil em uso: {perfil_ativo_chromium(nav['dir'])})"
-        print(f"   {i}. {nav['nome']}{extra}")
-    print()
-
-    while True:
-        escolha = input(f"Escolha o navegador [1-{len(instalados)}] (ENTER = 1): ").strip()
-        if escolha == "":
-            return instalados[0]
-        if escolha.isdigit() and 1 <= int(escolha) <= len(instalados):
-            return instalados[int(escolha) - 1]
-        print("   ⚠️  Opção inválida, tente de novo.")
-
-
-def escolher_navegador() -> dict:
-    """Respeita NAVEGADOR_FORCADO; senão detecta e pergunta qual navegador usar."""
-    instalados = navegadores_instalados()
-    if not instalados:
-        sys.exit("❌ Não encontrei Chrome, Edge nem Firefox neste computador.")
-    if NAVEGADOR_FORCADO:
-        for nav in instalados:
-            if nav["canal"] == NAVEGADOR_FORCADO:
-                return nav
-        sys.exit(f"❌ NAVEGADOR_FORCADO='{NAVEGADOR_FORCADO}' não está instalado aqui.")
-    if len(instalados) == 1:
-        print(f"🌐 Único navegador encontrado: {instalados[0]['nome']}\n")
-        return instalados[0]
-    return menu_navegador(instalados)
-
-
-def perfil_ativo_chromium(user_data_dir: Path) -> str:
-    """Descobre o perfil em uso lendo o 'Local State' do Chrome/Edge (cai pra Default)."""
-    try:
-        estado = json.loads((user_data_dir / "Local State").read_text(encoding="utf-8"))
-        return estado.get("profile", {}).get("last_used") or "Default"
-    except Exception:
-        return "Default"
+    if not user_data.exists():
+        sys.exit(
+            f"❌ Não encontrei o perfil do Edge em {user_data}.\n"
+            f"   O Microsoft Edge está instalado e foi aberto ao menos uma vez?"
+        )
+    return {"canal": "msedge", "nome": "Edge", "motor": "chromium", "processo": processo, "dir": user_data}
 
 
 def listar_perfis_chromium(user_data_dir: Path) -> list[dict]:
-    """Lista os perfis do Chrome/Edge lendo 'Local State' → profile.info_cache.
+    """Lista os perfis do Edge lendo 'Local State' → profile.info_cache.
 
     Cada item: id (pasta, ex. 'Profile 3'), nome (apelido do perfil), email e
     se é o último usado. Só inclui perfis cuja pasta existe de fato em disco.
@@ -279,7 +217,7 @@ def preparar_copia_perfil(nav: dict, perfil: str) -> Path:
     # Já semeada antes? Reaproveita (preserva o 'confiar neste dispositivo').
     if (destino / perfil).exists():
         print(f"♻️  Reaproveitando o perfil já copiado ({destino.name}/).")
-        print(f"   (apague essa pasta se quiser recopiar do seu perfil real)")
+        print("   (apague essa pasta se quiser recopiar do seu perfil real)")
         return destino
 
     print(f"📁 Copiando seu perfil '{perfil}' pra uma pasta de trabalho (só desta vez)...")
@@ -301,13 +239,12 @@ def preparar_copia_perfil(nav: dict, perfil: str) -> Path:
 
 
 def abrir_contexto(p, nav: dict):
-    """Abre o navegador: perfil REAL (Chrome/Edge) ou dedicado, conforme a config."""
-    # Perfil real só faz sentido pra Chromium (Firefox o Playwright roda o dele).
-    if USAR_PERFIL_REAL and nav["motor"] == "chromium":
+    """Abre o Edge: no SEU perfil real (padrão) ou num perfil dedicado do script."""
+    if USAR_PERFIL_REAL:
         perfil = escolher_perfil(nav)
         print(f"🧭 {nav['nome']} — SEU perfil real (perfil: {perfil})")
         garantir_navegador_fechado(nav["processo"], nav["nome"])
-        # Direto = abre o perfil real em si; cópia = só se o navegador bloquear (Chrome 136+).
+        # Direto = abre o perfil real em si; cópia = só se o Edge bloquear (Chromium 136+).
         user_data_dir = preparar_copia_perfil(nav, perfil) if COPIAR_PERFIL_REAL else nav["dir"]
         try:
             return p.chromium.launch_persistent_context(
@@ -319,8 +256,8 @@ def abrir_contexto(p, nav: dict):
             )
         except Exception as erro:
             dica = "" if COPIAR_PERFIL_REAL else (
-                "\n   Se o navegador recusar a automação no perfil padrão (típico do\n"
-                "   Chrome 136+), ligue COPIAR_PERFIL_REAL = True no topo do script."
+                "\n   Se o Edge recusar a automação no perfil padrão (Chromium 136+),\n"
+                "   ligue COPIAR_PERFIL_REAL = True no topo do script."
             )
             sys.exit(
                 f"❌ Não consegui abrir o {nav['nome']} com o seu perfil real.\n"
@@ -328,27 +265,18 @@ def abrir_contexto(p, nav: dict):
                 f"   Detalhe: {erro}"
             )
 
-    # Perfil dedicado (padrão do Firefox, ou USAR_PERFIL_REAL=False).
-    perfil = PASTA_PERFIS / f".perfil_moodle_{nav['canal']}"
-    print(f"🧭 {nav['nome']} — perfil dedicado ({perfil.name}/)")
+    # Perfil dedicado do script (USAR_PERFIL_REAL=False) — não precisa fechar o Edge.
+    perfil_dir = PASTA_PERFIS / f".perfil_moodle_{nav['canal']}"
+    print(f"🧭 {nav['nome']} — perfil dedicado ({perfil_dir.name}/)")
     try:
-        if nav["motor"] == "chromium":
-            return p.chromium.launch_persistent_context(
-                user_data_dir=str(perfil),
-                channel=nav["canal"],
-                headless=False,
-                no_viewport=True,
-            )
-        return p.firefox.launch_persistent_context(
-            user_data_dir=str(perfil),
+        return p.chromium.launch_persistent_context(
+            user_data_dir=str(perfil_dir),
+            channel=nav["canal"],
             headless=False,
+            no_viewport=True,
         )
     except Exception as erro:
-        sys.exit(
-            f"❌ Não consegui abrir o {nav['nome']}.\n"
-            f"   Se for Firefox, rode 'playwright install firefox'.\n"
-            f"   Detalhe: {erro}"
-        )
+        sys.exit(f"❌ Não consegui abrir o {nav['nome']}.\n   Detalhe: {erro}")
 
 
 def restaurar_sessao(context) -> None:
@@ -377,19 +305,20 @@ def salvar_sessao(context) -> None:
 
 
 def clicar_entrar_sala(page: Page) -> None:
-    """Na tela inicial do EAD, clica 'Entrar na Sala Virtual' pra ir direto às credenciais.
+    """Na tela de login do EAD, clica o 'Entrar na Sala Virtual' do LOGIN UNIFICADO.
 
-    Se você já estiver logado, esse botão não aparece e seguimos sem fazer nada.
+    A página tem DOIS botões com esse texto: o do 'login especial' (campos
+    usuário/senha) vem primeiro no DOM, e o do 'login unificado UNISC' tem
+    id='logar' e leva ao OAuth2 da UNISC (a tela de credenciais). Miramos o
+    unificado pelo id. Se você já estiver logado, ele não existe — seguimos.
     """
-    botao = page.locator(
-        "a:has-text('Entrar na Sala Virtual'), button:has-text('Entrar na Sala Virtual')"
-    ).first
+    botao = page.locator("#logar, form[action*='auth/oauth2/login'] button").first
     try:
-        if botao.is_visible(timeout=5_000):
-            print("   ↪️  Clicando em 'Entrar na Sala Virtual'...")
-            botao.click()
-    except Exception:
-        pass  # já logado ou layout diferente — segue o fluxo normal
+        botao.wait_for(state="visible", timeout=8_000)
+    except PlaywrightTimeout:
+        return  # já logado ou layout diferente — segue o fluxo normal
+    print("   ↪️  Clicando em 'Entrar na Sala Virtual' (login unificado)...")
+    botao.click()
 
 
 def garantir_login(page: Page) -> None:
@@ -636,10 +565,10 @@ def salvar(atividades: list[dict]) -> None:
 def main() -> None:
     print("🎓 Moodle Scraper — web scraping do painel do Moodle\n")
 
-    nav = escolher_navegador()
+    nav = navegador_edge()
     # No perfil real, a persistência é o próprio perfil — não exportamos cookies
     # pra um arquivo (evita despejar TODOS os seus cookies em disco).
-    usa_sessao_file = not (USAR_PERFIL_REAL and nav["motor"] == "chromium")
+    usa_sessao_file = not USAR_PERFIL_REAL
 
     with sync_playwright() as p:
         context = abrir_contexto(p, nav)
