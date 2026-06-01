@@ -11,7 +11,7 @@ Dois exemplos práticos, do mais simples ao caso real do Moodle da UNISC.
 
 ```bash
 pip install -r requirements.txt
-playwright install
+playwright install firefox   # só o Firefox é baixado; Chrome/Edge usam o do sistema
 ```
 
 ## Rodar o demo simples
@@ -22,13 +22,9 @@ python webscraping_demo.py
 
 ## Rodar o scraper do Moodle
 
-Ele usa o **navegador real** (Chrome ou Edge) com o perfil onde você já está
-logado — então **não precisa logar de novo a cada execução**.
-
-> ⚠️ **Antes de rodar, feche o Chrome/Edge por completo** (todas as janelas e o
-> ícone na bandeja). O navegador trava o perfil enquanto estiver aberto, e o
-> script precisa desse perfil pra reaproveitar a sua sessão. Se algo continuar
-> aberto, o próprio script avisa e espera você fechar.
+Ele usa o **seu próprio navegador** pra reaproveitar o login. O script detecta
+o que está instalado (Chrome, Edge ou Firefox) e, se houver mais de um, pergunta
+qual tem o seu login no Moodle.
 
 ```bash
 python moodle_scraper.py
@@ -36,34 +32,37 @@ python moodle_scraper.py
 
 Saída: `atividades_moodle.csv` e `atividades_moodle.json`.
 
-### Como ele reaproveita o login
+### Como cada navegador reaproveita o login
 
-Em vez de abrir um Chromium "limpo" e pedir login toda vez, o script chama
-`launch_persistent_context()` apontando para o diretório de perfil do seu
-navegador instalado:
+| Navegador | Como funciona | Login |
+|-----------|---------------|-------|
+| **Chrome / Edge** | Usa o seu **perfil real** (o de todo dia) via `launch_persistent_context(channel=...)` | Automático — você já está logado |
+| **Firefox** | O Playwright usa o **Firefox dele** (não o seu), com um perfil **dedicado** (`.perfil_firefox/`) | Uma vez na 1ª execução; depois fica salvo |
 
-```python
-context = p.chromium.launch_persistent_context(
-    user_data_dir=user_data_dir,   # perfil real do Chrome/Edge
-    channel="chrome",              # ou "msedge"
-    headless=False,
-)
-```
+> ⚠️ **Chrome/Edge: feche o navegador por completo antes de rodar** (todas as
+> janelas e o ícone da bandeja). O navegador trava o perfil real enquanto
+> estiver aberto. Se sobrar algo aberto, o script avisa e espera você fechar.
+> **Firefox não precisa** — o perfil é separado.
 
-Como é o mesmo perfil de sempre, os cookies e a sessão SSO da UNISC continuam
-válidos — login automático.
+Para Chrome/Edge, o script ainda descobre **sozinho qual perfil está em uso**
+(lê o `Local State` do navegador), então funciona mesmo se você tiver vários
+perfis e o do Moodle não for o "Default".
 
 ### Ajustes rápidos (no topo de `moodle_scraper.py`)
 
 - `MOODLE_URL` — endereço do Moodle.
-- `PERFIL` — `"Default"` por padrão. Se você usa vários perfis no navegador,
-  troque por `"Profile 1"`, `"Profile 2"`, etc.
+- `NAVEGADOR_FORCADO` — `None` detecta/pergunta; ou fixe `"chrome"`, `"msedge"`,
+  `"firefox"` pra pular o menu.
+- `PERFIL_FORCADO` — `None` detecta o perfil ativo do Chrome/Edge; ou force
+  `"Profile 1"`, `"Profile 2"`, etc.
 
 ### Resolução de problemas
 
-- **"Não consegui abrir o navegador" / erro de perfil em uso:** sobrou um
-  processo aberto. No Windows, finalize pelo Gerenciador de Tarefas
+- **"Não consegui abrir o navegador" / erro de perfil em uso (Chrome/Edge):**
+  sobrou um processo aberto. No Windows, finalize pelo Gerenciador de Tarefas
   (`chrome.exe` / `msedge.exe`) e rode de novo.
+- **Firefox: "Não consegui abrir o Firefox do Playwright":** rode
+  `playwright install firefox`.
 - **Caiu na tela de login:** sua sessão expirou. Faça login na janela que abriu
   e pressione ENTER no terminal — o script segue a partir daí.
 - **Nenhuma atividade encontrada:** os seletores do Moodle podem ter mudado.

@@ -1,21 +1,24 @@
 """
 Moodle Scraper — coleta de atividades pendentes no Moodle da UNISC
 ==================================================================
-Abre o NAVEGADOR REAL da pessoa (Chrome ou Edge já instalado) usando o
-perfil onde ela já está logada no dia a dia. Resultado: nada de login
-repetido a cada execução — a sessão é a mesma do navegador de sempre.
+Usa o NAVEGADOR da própria pessoa pra não precisar logar toda vez:
+
+  • Chrome / Edge → reaproveita o seu perfil REAL (onde você já está logado
+    no dia a dia). Login automático. Exige o navegador fechado antes de rodar.
+  • Firefox → o Playwright usa o Firefox dele (não o seu), então mantém um
+    perfil DEDICADO: você loga uma vez e fica salvo pras próximas execuções.
+
+O script detecta sozinho o que está instalado; se houver mais de um, pergunta.
 
 Setup (uma vez):
     pip install -r requirements.txt
-    playwright install
+    playwright install firefox      # só o Firefox precisa ser baixado;
+                                    # Chrome/Edge usam a instalação do sistema
 
 Uso:
-    1. FECHE completamente o Chrome/Edge (todas as janelas e o ícone da
-       bandeja). O navegador trava o perfil enquanto estiver aberto.
+    1. Se for usar Chrome/Edge: FECHE o navegador por completo (janelas + ícone
+       da bandeja). Pra Firefox não precisa.
     2. python moodle_scraper.py
-
-O navegador é controlado por automação, mas é o seu mesmo: cookies,
-sessão e login continuam valendo.
 """
 
 from __future__ import annotations
@@ -33,12 +36,13 @@ from playwright.sync_api import Locator, Page, sync_playwright
 # ─────────────────────────────── Configuração ───────────────────────────────
 MOODLE_URL = "https://portalvirtual.unisc.br/moodle"
 
-# Perfil dentro do navegador. "Default" é o primeiro perfil; se a pessoa usa
-# vários perfis no Chrome/Edge, troque por "Profile 1", "Profile 2", etc.
-PERFIL = "Default"
+# Forçar uma escolha (deixe None pra detectar/perguntar automaticamente):
+NAVEGADOR_FORCADO: str | None = None   # "chrome" | "msedge" | "firefox"
+PERFIL_FORCADO: str | None = None      # ex: "Default", "Profile 1" (só Chrome/Edge)
 
 ARQUIVO_CSV = "atividades_moodle.csv"
 ARQUIVO_JSON = "atividades_moodle.json"
+PERFIL_FIREFOX = Path(__file__).resolve().parent / ".perfil_firefox"
 
 TIMEOUT_PADRAO = 10_000  # ms — limite padrão de cada operação do Playwright
 
@@ -50,35 +54,81 @@ NOMES_GENERICOS = {
 
 
 # ──────────────────────────── Detecção do navegador ─────────────────────────
-def perfis_disponiveis() -> list[tuple[str, str, Path]]:
-    """Lista (canal, processo, user_data_dir) dos navegadores instalados.
+def navegadores_instalados() -> list[dict]:
+    """Lista os navegadores disponíveis neste computador.
 
-    `canal` é o que o Playwright entende ("chrome"/"msedge"); `processo` é o
-    nome do executável usado pra checar se ele está aberto.
+    Cada item traz: canal (nome p/ Playwright), nome amigável, motor
+    ("chromium"/"firefox"), processo (p/ checar se está aberto) e o diretório
+    de perfil real do usuário.
     """
     home = Path.home()
     if sys.platform.startswith("win"):
-        base = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
+        local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
+        roaming = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
         candidatos = [
-            ("chrome", "chrome.exe", base / "Google/Chrome/User Data"),
-            ("msedge", "msedge.exe", base / "Microsoft/Edge/User Data"),
+            ("chrome", "Chrome", "chromium", "chrome.exe", local / "Google/Chrome/User Data"),
+            ("msedge", "Edge", "chromium", "msedge.exe", local / "Microsoft/Edge/User Data"),
+            ("firefox", "Firefox", "firefox", "firefox.exe", roaming / "Mozilla/Firefox"),
         ]
     elif sys.platform == "darwin":
-        base = home / "Library/Application Support"
+        sup = home / "Library/Application Support"
         candidatos = [
-            ("chrome", "Google Chrome", base / "Google/Chrome"),
-            ("msedge", "Microsoft Edge", base / "Microsoft Edge"),
+            ("chrome", "Chrome", "chromium", "Google Chrome", sup / "Google/Chrome"),
+            ("msedge", "Edge", "chromium", "Microsoft Edge", sup / "Microsoft Edge"),
+            ("firefox", "Firefox", "firefox", "firefox", sup / "Firefox"),
         ]
     else:  # linux
         candidatos = [
-            ("chrome", "chrome", home / ".config/google-chrome"),
-            ("msedge", "msedge", home / ".config/microsoft-edge"),
+            ("chrome", "Chrome", "chromium", "chrome", home / ".config/google-chrome"),
+            ("msedge", "Edge", "chromium", "msedge", home / ".config/microsoft-edge"),
+            ("firefox", "Firefox", "firefox", "firefox", home / ".mozilla/firefox"),
         ]
-    return [(canal, proc, caminho) for canal, proc, caminho in candidatos if caminho.exists()]
+    return [
+        {"canal": c, "nome": n, "motor": m, "processo": proc, "dir": caminho}
+        for c, n, m, proc, caminho in candidatos
+        if caminho.exists()
+    ]
+
+
+def escolher_navegador(navegadores: list[dict]) -> dict:
+    """Escolhe o navegador: respeita NAVEGADOR_FORCADO, senão pergunta se >1."""
+    if NAVEGADOR_FORCADO:
+        for nav in navegadores:
+            if nav["canal"] == NAVEGADOR_FORCADO:
+                return nav
+        sys.exit(f"❌ NAVEGADOR_FORCADO='{NAVEGADOR_FORCADO}' não está instalado aqui.")
+
+    if len(navegadores) == 1:
+        return navegadores[0]
+
+    print("🧭 Encontrei mais de um navegador. Onde está o seu login no Moodle?\n")
+    for i, nav in enumerate(navegadores, 1):
+        modo = "login reaproveitado" if nav["motor"] == "chromium" else "login uma vez"
+        print(f"   {i}. {nav['nome']}  ({modo})")
+    while True:
+        escolha = input("\n   Digite o número: ").strip()
+        if escolha.isdigit() and 1 <= int(escolha) <= len(navegadores):
+            return navegadores[int(escolha) - 1]
+        print("   ⚠️  Opção inválida, tente de novo.")
+
+
+def perfil_ativo_chromium(user_data_dir: Path) -> str:
+    """Descobre o perfil em uso lendo o 'Local State' do Chrome/Edge.
+
+    Cai pra "Default" se não conseguir ler. Pode ser sobrescrito por
+    PERFIL_FORCADO.
+    """
+    if PERFIL_FORCADO:
+        return PERFIL_FORCADO
+    try:
+        estado = json.loads((user_data_dir / "Local State").read_text(encoding="utf-8"))
+        return estado.get("profile", {}).get("last_used") or "Default"
+    except Exception:
+        return "Default"
 
 
 def navegador_aberto(processo: str) -> bool:
-    """True se o navegador estiver rodando (perfil travado)."""
+    """True se o navegador estiver rodando (e travando o perfil real)."""
     try:
         if sys.platform.startswith("win"):
             saida = subprocess.run(
@@ -94,12 +144,49 @@ def navegador_aberto(processo: str) -> bool:
         return False  # sem tasklist/pgrep — segue e deixa o Playwright avisar
 
 
-def garantir_navegador_fechado(processo: str, nome_amigavel: str) -> None:
-    """Bloqueia até a pessoa fechar o navegador (libera o lock do perfil)."""
+def garantir_navegador_fechado(processo: str, nome: str) -> None:
+    """Bloqueia até a pessoa fechar o navegador (libera o lock do perfil real)."""
     while navegador_aberto(processo):
-        print(f"⚠️  O {nome_amigavel} está aberto e trava o seu perfil.")
+        print(f"⚠️  O {nome} está aberto e trava o seu perfil.")
         print("   Feche TODAS as janelas (e o ícone na bandeja, se houver).")
         input("   Depois pressione ENTER para continuar... ")
+
+
+def abrir_contexto(p, nav: dict):
+    """Abre o navegador certo: perfil real (Chrome/Edge) ou dedicado (Firefox)."""
+    if nav["motor"] == "chromium":
+        perfil = perfil_ativo_chromium(nav["dir"])
+        print(f"🧭 {nav['nome']} (perfil: {perfil}) — reaproveitando o seu login")
+        garantir_navegador_fechado(nav["processo"], nav["nome"])
+        try:
+            return p.chromium.launch_persistent_context(
+                user_data_dir=str(nav["dir"]),
+                channel=nav["canal"],
+                headless=False,
+                args=[f"--profile-directory={perfil}"],
+                no_viewport=True,
+            )
+        except Exception as erro:
+            sys.exit(
+                f"❌ Não consegui abrir o {nav['nome']}.\n"
+                f"   Confira se ele está totalmente fechado e tente de novo.\n"
+                f"   Detalhe: {erro}"
+            )
+
+    # Firefox: Playwright usa o Firefox dele, então mantemos um perfil próprio.
+    print(f"🧭 Firefox — perfil dedicado em {PERFIL_FIREFOX.name}/")
+    print("   (o login fica salvo aqui; na 1ª vez você loga, depois é automático)")
+    try:
+        return p.firefox.launch_persistent_context(
+            user_data_dir=str(PERFIL_FIREFOX),
+            headless=False,
+        )
+    except Exception as erro:
+        sys.exit(
+            "❌ Não consegui abrir o Firefox do Playwright.\n"
+            "   Rode 'playwright install firefox' e tente de novo.\n"
+            f"   Detalhe: {erro}"
+        )
 
 
 # ────────────────────────────── Coleta de dados ─────────────────────────────
@@ -294,41 +381,23 @@ def salvar(atividades: list[dict]) -> None:
 def main() -> None:
     print("🎓 Moodle Scraper — usando o seu próprio navegador\n")
 
-    perfis = perfis_disponiveis()
-    if not perfis:
-        sys.exit("❌ Não encontrei Chrome nem Edge instalados neste computador.")
+    navegadores = navegadores_instalados()
+    if not navegadores:
+        sys.exit("❌ Não encontrei Chrome, Edge nem Firefox neste computador.")
 
-    canal, processo, user_data_dir = perfis[0]
-    nome_amigavel = "Chrome" if canal == "chrome" else "Edge"
-    print(f"🧭 Navegador: {nome_amigavel}  (perfil: {PERFIL})")
-
-    garantir_navegador_fechado(processo, nome_amigavel)
+    nav = escolher_navegador(navegadores)
 
     with sync_playwright() as p:
-        try:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=str(user_data_dir),
-                channel=canal,
-                headless=False,
-                args=[f"--profile-directory={PERFIL}"],
-                no_viewport=True,
-            )
-        except Exception as erro:
-            sys.exit(
-                f"❌ Não consegui abrir o {nome_amigavel}.\n"
-                f"   Confira se ele está totalmente fechado e tente de novo.\n"
-                f"   Detalhe: {erro}"
-            )
-
+        context = abrir_contexto(p, nav)
         context.set_default_timeout(TIMEOUT_PADRAO)
         page = context.pages[0] if context.pages else context.new_page()
 
         page.goto(f"{MOODLE_URL}/my/", timeout=15_000)
         page.wait_for_timeout(2_000)
 
-        # Como é o perfil real, normalmente já está logado. Se não, login manual.
+        # Chrome/Edge: normalmente já logado. Firefox (1ª vez): login manual.
         if any(t in page.url.lower() for t in ("login", "auth", "sso")):
-            print("🔑 Sessão não ativa. Faça login no navegador que abriu.")
+            print("🔑 Faça login no navegador que abriu.")
             input("   Quando estiver no PAINEL, pressione ENTER aqui... ")
         else:
             print("✅ Já logado pelo seu perfil — nenhum login necessário.")
