@@ -1,5 +1,5 @@
 """
-🕷️ Oficina de Web Scraping - Script de Demonstração
+Oficina de Web Scraping - Script de Demonstração
 ====================================================
 Este script coleta citações do site quotes.toscrape.com
 e salva em um arquivo CSV.
