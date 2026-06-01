@@ -1,0 +1,6 @@
+# Oficina de Web Scraping — dependências
+playwright==1.60.0
+
+# Usadas só pelo webscraping_demo.py (requests + BeautifulSoup)
+requests>=2.31
+beautifulsoup4>=4.12
